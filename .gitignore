@@ -1,0 +1,41 @@
+# ─── Credenciais e variáveis de ambiente ──────────────────────────────────────
+.env
+.env.local
+.env.production
+cube_project/.env
+
+# ─── Ambiente virtual Python ──────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Cache Python ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ─── Banco de dados vetorial (ChromaDB) ───────────────────────────────────────
+chroma_data/
+
+# ─── Logs e arquivos temporários ──────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ─── IDEs e ferramentas locais ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Claude Code ──────────────────────────────────────────────────────────────
+.claude/settings.local.json
+
+# ─── Node / Cube.js ───────────────────────────────────────────────────────────
+cube_project/node_modules/
+cube_project/.cubestore/

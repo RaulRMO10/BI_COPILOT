@@ -1,0 +1,84 @@
+cubes:
+  - name: premiacoes_metas
+    # ───────────────────────────────────────────────────────────────────────
+    # METAS DE PREMIAÇÃO POR REPRESENTANTE E MÊS
+    #
+    #   tipo 1 → FATURAMENTO   (meta de faturamento líquido em R$)
+    #   tipo 2 → MARGEM        (meta de margem em %)
+    #   tipo 3 → TICKET MÉDIO  (meta de ticket médio em R$)
+    #   tipo 4 → POSITIVAÇÃO   (meta de clientes/cidades positivados)
+    #
+    # O SQL pivota as 4 linhas (uma por tipo) em colunas, garantindo
+    # UMA linha por (REPRESENTANTE, MES_ANO). Isso evita fan-out no
+    # JOIN com dw_vendas (que tem N transações por rep/mês).
+    #
+    # JOIN com dw_vendas:
+    #   TRUNC(DATA_NOTA,'MM') = TRUNC(MES_ANO,'MM')
+    #   AND dw_vendas.REPRESENTANTE = premiacoes_metas.REPRESENTANTE
+    # ───────────────────────────────────────────────────────────────────────
+    sql: >
+      SELECT
+          representante,
+          mes_ano,
+          representante || '|' || TO_CHAR(mes_ano,'YYYYMM') AS META_ID,
+          MAX(CASE WHEN tipo = 1 THEN valor END) AS META_FATURAMENTO,
+          MAX(CASE WHEN tipo = 2 THEN valor END) AS META_MARGEM,
+          MAX(CASE WHEN tipo = 3 THEN valor END) AS META_TICKET_MEDIO,
+          MAX(CASE WHEN tipo = 4 THEN valor END) AS META_POSITIVACAO
+      FROM DW_METAS_COMERCIAIS
+      WHERE tipo IN (1,2,3,4)
+      GROUP BY representante, mes_ano
+
+    measures:
+      - name: objetivo_faturamento
+        sql: META_FATURAMENTO
+        type: max
+        description: >
+          Meta de Faturamento Líquido (R$) do representante no mês consultado.
+          Use para comparar o faturamento realizado (dw_vendas.total_liquido)
+          com a meta estabelecida. Tipo 1 na tabela DW_METAS_COMERCIAIS.
+
+      - name: objetivo_margem
+        sql: META_MARGEM
+        type: max
+        description: >
+          Meta de Margem (%) do representante no mês consultado.
+          Compare com dw_vendas.margem_desconto para avaliar atingimento.
+          Tipo 2 na tabela DW_METAS_COMERCIAIS.
+
+      - name: objetivo_ticket_medio
+        sql: META_TICKET_MEDIO
+        type: max
+        description: >
+          Meta de Ticket Médio (R$) do representante no mês consultado.
+          Compare com dw_vendas.ticket_medio para avaliar atingimento.
+          Tipo 3 na tabela DW_METAS_COMERCIAIS.
+
+      - name: objetivo_positivacao
+        sql: META_POSITIVACAO
+        type: max
+        description: >
+          Meta de Positivação (número de clientes/cidades) do representante no mês consultado.
+          Compare com dw_vendas.positivacao para avaliar atingimento.
+          Tipo 4 na tabela DW_METAS_COMERCIAIS.
+
+    dimensions:
+      - name: chave_meta
+        sql: META_ID
+        type: string
+        primaryKey: true
+        shown: false
+
+      - name: id_rep_meta
+        sql: REPRESENTANTE
+        type: string
+        description: >
+          ID do representante (3 dígitos) ao qual a meta pertence.
+          Mesmo formato do campo representante em dw_vendas.
+          Use como referência de filtro; prefira filtrar pelo representante
+          em dw_vendas para garantir que as transações também sejam filtradas.
+
+      - name: referencia_meta
+        sql: MES_ANO
+        type: time
+        description: "Mes/ano de referencia da meta (DATE truncado ao 1o dia do mes). Em queries que cruzam realizado x meta, use timeDimensions em dw_vendas.data_nota. Em queries somente de metas, use este campo como timeDimension com granularity month."

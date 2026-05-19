@@ -1,0 +1,134 @@
+cubes:
+  - name: dw_ranking_municipios
+    # ───────────────────────────────────────────────────────────────────────
+    # CARTEIRA POR MUNICÍPIO — RANKING MENSAL (Setor Público)
+    #
+    # Estrutura idêntica ao dw_ranking_clientes, mas a granularidade é
+    # CIDADE (município) em vez de CNPJ do cliente.
+    # Orientado ao canal público/direto, onde a unidade de análise
+    # comercial é o município e não o cliente individual.
+    # ───────────────────────────────────────────────────────────────────────
+    sql: SELECT * FROM DW_CARTEIRA_MUNICIPIOS
+
+    measures:
+      - name: total_municipios
+        sql: CIDADE
+        type: countDistinct
+        description: "Conta o número ÚNICO de municípios/cidades na carteira. Use OBRIGATORIAMENTE para calcular percentuais e tamanhos de base por Ranking no canal público. SEMPRE USE JUNTO COM O FILTRO `mes_ano` para uma foto mensal exata."
+
+      - name: faturamento_mes_atual
+        sql: MESATUAL
+        type: sum
+        description: "Soma das vendas no mês atual de referência."
+
+      - name: faturamento_mes_anterior
+        sql: MES01
+        type: sum
+        description: "Soma das vendas no mês imediatamente anterior ao de referência (Mês -1)."
+
+      - name: faturamento_dois_meses_atras
+        sql: MES02
+        type: sum
+        description: "Soma das vendas dois meses antes do mês de referência (Mês -2)."
+
+      - name: faturamento_tres_meses_atras
+        sql: MES03
+        type: sum
+        description: "Soma das vendas três meses antes do mês de referência (Mês -3)."
+
+      - name: frequencia_vendas
+        sql: FREQUENCIA
+        type: sum
+        description: "Quantidade de meses em que o município recebeu vendas nos últimos 3 meses."
+
+      - name: margem_mes_atual
+        sql: MESATUAL_MARGEM
+        type: avg
+        description: "Percentual de Margem de Lucro no mês atual de referência."
+
+      - name: margem_mes_anterior
+        sql: MES01_MARGEM
+        type: avg
+        description: "Percentual de Margem de Lucro no mês -1."
+
+      - name: margem_dois_meses_atras
+        sql: MES02_MARGEM
+        type: avg
+        description: "Percentual de Margem de Lucro no mês -2."
+
+      - name: margem_tres_meses_atras
+        sql: MES03_MARGEM
+        type: avg
+        description: "Percentual de Margem de Lucro no mês -3."
+
+      - name: media_margem_trimestral
+        sql: MEDIA_MARGEM
+        type: avg
+        description: "Média percentual de Margem de Lucro do município no último trimestre."
+
+      - name: faturamento_acumulado_trimestre
+        sql: TOTAL_VENDAS_FECHADO
+        type: sum
+        description: "Faturamento acumulado dos últimos 3 meses do histórico do município. AVISO CRÍTICO: VOCÊ É OBRIGADO A FILTRAR O 'mes_ano' EXATO DA CONSULTA — caso contrário somará históricos passados duplicando os resultados."
+
+      - name: media_faturamento_trimestral
+        sql: MEDIA_TOTAL_VENDAS_FECHADO
+        type: avg
+        description: "Faturamento médio dos últimos 3 meses dividido pela frequência de vendas."
+
+    dimensions:
+      - name: id_cidade
+        sql: CIDADE
+        type: string
+        primaryKey: true
+        description: "ID numérico da cidade/município. Chave primária do ranking por município."
+
+      - name: municipio
+        sql: NOME_CIDADE
+        type: string
+        description: "Nome do município."
+
+      - name: uf_municipio
+        sql: ESTADO
+        type: string
+        description: "UF do município."
+
+      - name: id_funcionario
+        sql: FUNCIONARIO
+        type: string
+        description: "ID do funcionário responsável."
+
+      - name: id_representante_carteira
+        sql: REPRESENTANTE
+        type: string
+        description: "ID do representante (3 dígitos). Use a string exata retornada pela ferramenta de busca. OBRIGATÓRIO em comparações temporais."
+
+      - name: id_departamento_carteira
+        sql: DEPARTAMENTO
+        type: string
+        description: "ID do departamento."
+
+      - name: nome_depto_carteira
+        sql: NOME_DEPARTAMENTO
+        type: string
+        description: "Nome do departamento."
+
+      - name: nome_rep_carteira
+        sql: NOME_REPRESENTANTE
+        type: string
+        description: "Nome do representante. Prefira filtrar pelo ID (campo representante_carteira)."
+
+      - name: referencia_mes_ano
+        sql: MES_ANO
+        type: string
+        description: "Mês de referência no formato MM/YYYY. SEMPRE use em queries sobre carteira de municípios com operador equals — evita misturar fotos de meses diferentes."
+
+      - name: classificacao_municipio
+        sql: RANKING
+        type: string
+        description: "Ranking do município na referência. Valores aceitos: '1-OURO', '2-PRATA', '3-BRONZE', '4-RED', '5-NENHUMA VENDA'."
+
+      - name: data_ultimo_pedido
+        sql: ULTIMA_COMPRA
+        type: time
+        description: "Data da última nota fiscal recebida pelo município."

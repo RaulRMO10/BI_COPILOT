@@ -1,0 +1,502 @@
+cubes:
+  - name: dw_vendas
+    # ───────────────────────────────────────────────────────────────────────
+    # BASE SQL — espelha exatamente a lógica da referência (Diária privada):
+    #
+    # Referência:
+    #   BASE: agrupa (CGC, dia) SEM filtro HAVING — inclui ALL dias (neg + pos).
+    #   GRADE: preenche dias sem nota com NVL→0.
+    #   ACUM: SUM cumulativo REAL (negativos diminuem o saldo).
+    #   Positivação = primeiro dia em que SALDO_ACUMULADO > 0 (cruzamento).
+    #
+    # Nossa implementação com window functions:
+    #   T0: computa SALDO_DIA_CGC (SUM por CGC+dia), RN_CGC (ROW_NUMBER por
+    #       CGC+dia) para garantir que cada dia apareça apenas UMA vez no
+    #       acumulador (evita multiplicação pelo Nº de notas do dia via RANGE).
+    #   T:  SALDO_ACUM_CGC = acumulador TRUE (inclui negativos).
+    #       CASE WHEN RN_CGC = 1 THEN SALDO_DIA_CGC ELSE 0 → soma apenas 1x.
+    #   Outer: IS_PRIMEIRA = 1 no primeiro dia em que SALDO_ACUM > 0
+    #       E ontem ≤ 0 (cruzamento real), idêntico ao referencial.
+    #
+    # DIA_KEY = TO_CHAR(DATA_NOTA,'YYYYMMDD') — string, ordem lexico ≡ cronológica.
+    # ───────────────────────────────────────────────────────────────────────
+    sql: >
+      SELECT T.*,
+        CASE
+          WHEN T.SALDO_DIA_CGC > 0
+           AND T.SALDO_ACUM_CGC > 0
+           AND (T.SALDO_ACUM_CGC - T.SALDO_DIA_CGC) <= 0
+           AND T.DIA_KEY = MIN(
+                 CASE
+                   WHEN T.SALDO_DIA_CGC > 0
+                    AND T.SALDO_ACUM_CGC > 0
+                    AND (T.SALDO_ACUM_CGC - T.SALDO_DIA_CGC) <= 0
+                   THEN T.DIA_KEY
+                   ELSE NULL
+                 END
+               ) OVER (PARTITION BY T.CAD_CGC, T.MES_KEY)
+          THEN 1
+          ELSE 0
+        END AS IS_PRIMEIRA_COMPRA_MES,
+        CASE
+          WHEN T.SALDO_MES_CIDADE > 0
+           AND T.SALDO_DIA_CIDADE > 0
+           AND T.DIA_KEY = MIN(CASE WHEN T.SALDO_DIA_CIDADE > 0 THEN T.DIA_KEY ELSE NULL END) OVER (
+                 PARTITION BY T.CIDADE, T.MES_KEY
+               )
+          THEN 1
+          ELSE 0
+        END AS IS_PRIMEIRA_COMPRA_MES_PUBLICA,
+        -- Flag per-representante: primeiro dia positivo de (REP, CIDADE) no mês.
+        -- Usado por positivacao_publica_rep / ticket_medio_publico_rep.
+        -- Garante que filtros por representante mostrem os dados corretos.
+        CASE
+          WHEN T.SALDO_MES_CIDADE_REP > 0
+           AND T.SALDO_DIA_CIDADE_REP > 0
+           AND T.DIA_KEY = MIN(CASE WHEN T.SALDO_DIA_CIDADE_REP > 0 THEN T.DIA_KEY ELSE NULL END) OVER (
+                 PARTITION BY T.REPRESENTANTE, T.CIDADE, T.MES_KEY
+               )
+          THEN 1
+          ELSE 0
+        END AS IS_PRIMEIRA_COMPRA_PUBLICA_REP,
+        -- POSITIVACAO_FLAG: espelha CALC = POS_DIA - LAG(POS_DIA) da referência.
+        --   +1 quando o acumulado do CGC cruza de ≤0 para >0 (cliente entra).
+        --   -1 quando o acumulado do CGC cruza de >0 para ≤0 (cliente sai / devolução).
+        --   Contado apenas para RN_CGC=1 (uma vez por (CGC, dia)).
+        --   SUM(POSITIVACAO_FLAG) por dia = delta diário de clientes positivados,
+        --   exatamente igual ao VALOR do SQL de referência.
+        CASE
+          WHEN T.RN_CGC = 1
+           AND T.SALDO_DIA_CGC > 0
+           AND T.SALDO_ACUM_CGC > 0
+           AND (T.SALDO_ACUM_CGC - T.SALDO_DIA_CGC) <= 0
+          THEN 1
+          WHEN T.RN_CGC = 1
+           AND T.SALDO_DIA_CGC < 0
+           AND T.SALDO_ACUM_CGC <= 0
+           AND (T.SALDO_ACUM_CGC - T.SALDO_DIA_CGC) > 0
+          THEN -1
+          ELSE 0
+        END AS POSITIVACAO_FLAG,
+        -- Flag per-representante: positivação privada calculada por (REP, CGC).
+        -- Garante que filtros por representante mostrem o valor correto.
+        CASE
+          WHEN T.RN_CGC_REP = 1
+           AND T.SALDO_DIA_CGC_REP > 0
+           AND T.SALDO_ACUM_CGC_REP > 0
+           AND (T.SALDO_ACUM_CGC_REP - T.SALDO_DIA_CGC_REP) <= 0
+          THEN 1
+          WHEN T.RN_CGC_REP = 1
+           AND T.SALDO_DIA_CGC_REP < 0
+           AND T.SALDO_ACUM_CGC_REP <= 0
+           AND (T.SALDO_ACUM_CGC_REP - T.SALDO_DIA_CGC_REP) > 0
+          THEN -1
+          ELSE 0
+        END AS POSITIVACAO_FLAG_REP
+      FROM (
+        -- Nível T: acumulador REAL por (CAD_CGC, MES_KEY) ordenado por DIA_KEY.
+        -- CASE WHEN RN_CGC = 1 THEN SALDO_DIA_CGC ELSE 0:
+        --   cada dia contribui seu saldo (positivo OU negativo) apenas UMA vez,
+        --   independente do Nº de notas. Equivale ao SUM(NVL(B.TOTAL_DIA,0))
+        --   do GRADE/ACUM da referência, sem precisar do JOIN calendário.
+        SELECT T0.*,
+          SUM(CASE WHEN T0.RN_CGC = 1 THEN T0.SALDO_DIA_CGC ELSE 0 END) OVER (
+            PARTITION BY T0.CAD_CGC, T0.MES_KEY
+            ORDER BY T0.DIA_KEY
+            RANGE UNBOUNDED PRECEDING
+          ) AS SALDO_ACUM_CGC,
+          SUM(CASE WHEN T0.RN_CGC_REP = 1 THEN T0.SALDO_DIA_CGC_REP ELSE 0 END) OVER (
+            PARTITION BY T0.REPRESENTANTE, T0.CAD_CGC, T0.MES_KEY
+            ORDER BY T0.DIA_KEY
+            RANGE UNBOUNDED PRECEDING
+          ) AS SALDO_ACUM_CGC_REP
+        FROM (
+          -- Nível T0: colunas base + window functions sem ORDER BY (sem acumulado).
+          SELECT D.*,
+            TO_CHAR(D.DATA_NOTA, 'YYYYMMDD') AS DIA_KEY,
+            TO_CHAR(D.DATA_NOTA, 'YYYY/MM')  AS MES_KEY,
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+            ) AS SALDO_DIA_CGC,
+            ROW_NUMBER() OVER (
+              PARTITION BY D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+              ORDER BY ROWID
+            ) AS RN_CGC,
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.CIDADE, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+            ) AS SALDO_DIA_CIDADE,
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.CIDADE, TO_CHAR(D.DATA_NOTA, 'YYYY/MM')
+            ) AS SALDO_MES_CIDADE,
+            -- Variantes per-representante: usadas pelo IS_PRIMEIRA_COMPRA_PUBLICA_REP
+            -- para calcular positivacao_publica_rep (queries filtradas por rep).
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.REPRESENTANTE, D.CIDADE, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+            ) AS SALDO_DIA_CIDADE_REP,
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.REPRESENTANTE, D.CIDADE, TO_CHAR(D.DATA_NOTA, 'YYYY/MM')
+            ) AS SALDO_MES_CIDADE_REP,
+            -- Variantes per-representante para positivação PRIVADA (CGC):
+            -- Usadas por POSITIVACAO_FLAG_REP (queries filtradas por rep).
+            SUM(D.TOTAL_LIQUIDO) OVER (
+              PARTITION BY D.REPRESENTANTE, D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+            ) AS SALDO_DIA_CGC_REP,
+            ROW_NUMBER() OVER (
+              PARTITION BY D.REPRESENTANTE, D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
+              ORDER BY ROWID
+            ) AS RN_CGC_REP
+          FROM DW_VENDAS D
+        ) T0
+      ) T
+    
+    joins:
+      # JOIN  COM A TABELA DE RANKING DO CLIENTE (MENSAL)
+      - name: dw_ranking_clientes
+        sql: >
+          {CUBE}.cnpj_cliente_nota = {dw_ranking_clientes}.cnpj_carteira
+        relationship: belongsTo
+
+      # JOIN COM METAS DE PREMIAÇÃO POR REPRESENTANTE/MÊS
+      # Uma meta por (representante, mês): sem fan-out nas transações.
+      # Filtro de data deve ser feito via timeDimensions em data_nota (dw_vendas)
+      # — o TRUNC garante que a meta do mês correto seja sempre usada.
+      - name: premiacoes_metas
+        sql: >
+          TRUNC({CUBE}.DATA_NOTA,'MM') = TRUNC({premiacoes_metas}.MES_ANO,'MM')
+          AND {CUBE}.REPRESENTANTE = {premiacoes_metas}.REPRESENTANTE
+        relationship: belongsTo
+
+      # JOIN COM CARTEIRA DE MUNICÍPIOS (canal público/direto)
+      # Uma linha por (CIDADE, MES_ANO) — filtre mes_ano na query para evitar fan-out.
+      - name: dw_ranking_municipios
+        sql: >
+          {CUBE}.CIDADE = {dw_ranking_municipios}.CIDADE
+        relationship: belongsTo
+
+      # JOIN COM ANÁLISE DE CRÉDITO POR CLIENTE (CNPJ)
+      # Uma linha de crédito por CAD_CGC — sem fan-out (belongsTo).
+      # Permite consultar dados de crédito/inadimplência junto com transações.
+      - name: dw_analise_credito
+        sql: >
+          {CUBE}.CAD_CGC = {dw_analise_credito}.CAD_CGC
+        relationship: belongsTo
+
+      # JOIN COM ESTOQUE E HIERARQUIA DE PRODUTOS (PAI → FILHO)
+      # Uma linha de estoque por CODIGO_PRO — sem fan-out (belongsTo).
+      # Permite cruzar faturamento com estoque e agrupar por produto-pai.
+      # ⚠ Ao agrupar por produto-pai, métricas de razão (margem, ticket)
+      #   NÃO podem ser simplesmente agregadas — ver regras no prompt §12.
+      - name: dw_estoque_produto_pai
+        sql: >
+          {CUBE}.CODIGO_PRO = {dw_estoque_produto_pai}.CODIGO_PRO
+        relationship: belongsTo
+        
+    measures:
+
+      - name: faturamento_liquido
+        sql: TOTAL_LIQUIDO
+        type: sum
+        description: "O Faturamento Líquido (Dinheiro limpo pago já deduzido de impostos/descontos/devoluções). É a métrica financeira oficial e principal de vendas."
+                
+      - name: faturamento_bruto
+        sql: TOTAL_BRUTO
+        type: sum
+        description: "O Faturamento Bruto (Cru, sem abater impostos/devoluções/descontos). Use apenas se o usuário pedir explicitamente o valor Bruto."
+        
+      - name: valor_desconto
+        sql: DESCONTO
+        type: sum
+        description: "A soma financeira total em R$ dos descontos concedidos aos clientes na nota."
+        
+      - name: custo_mercadoria
+        sql: TOTAL_CUSTO
+        type: sum
+        description: "A soma total do custo (CPV) das mercadorias liquidadas."
+        
+      - name: base_vendas
+        sql: TOTAL_VENDAS
+        type: sum
+        description: "Venda faturada exata (Total base usado como numerador para cálculos de margem de desconto)."
+
+      - name: valor_devolucao
+        sql: TOTAL_DEVOLUCAO
+        type: sum
+        description: "Total em R$ cancelado ou estornado por devolução (logística reversa) do cliente."
+
+      - name: preco_tabela
+        sql: TOTAL_TELA
+        type: sum
+        description: "Valor do preço de venda referencial em tabela cheia (usado como denominador puro no cálculo de margem)."
+        
+      - name: percentual_margem
+        description: "Margem / Desconto de Tela: 1 - (SUM(TOTAL_VENDAS) / SUM(TOTAL_TELA))"
+        sql: "CASE WHEN SUM(TOTAL_TELA) <= 0 OR SUM(TOTAL_VENDAS) <= 0 THEN 0 ELSE 1 - (SUM(TOTAL_VENDAS) / SUM(TOTAL_TELA)) END"
+        type: number
+
+      # ─────────────────────────────────────────────────────────────────────
+      # POSITIVAÇÃO
+      # Espelha o CALC = POS_DIA - LAG(POS_DIA) da referência:
+      #   +1: cliente cruzou o acumulado de ≤0 para >0 (novo positivado)
+      #   -1: cliente cruzou de >0 para ≤0 (saiu por devolução/retorno)
+      # SUM diário = delta exato de positivados (igual ao VALOR do SQL ref).
+      # SUM mensal = líquido de novos positivados no período.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: clientes_positivados
+        description: >
+          Positivação global:número DE CLIENTES ÚNICOS (CNPJ) que fizeram a sua
+          PRIMEIRA compra com saldo acumulado positivo dentro do período.
+          Espelha o CALC = POS_DIA - LAG(POS_DIA) da referência: +1 quando
+          o acumulado do cliente cruza de ≤0 para >0, -1 quando cai abaixo.
+          Use para total geral SEM filtro de representante. COM filtro de
+          representante, use positivacao_rep.
+        type: sum
+        sql: POSITIVACAO_FLAG
+
+      - name: positivacao_por_representante
+        description: >
+          Positivação por Representante: número de clientes únicos (CNPJ)
+          positivados calculado individualmente por representante. Cada rep
+          tem seu próprio acumulador (REP, CGC, mês), garantindo que o filtro
+          WHERE REPRESENTANTE = X retorne o valor correto. Use ESTE (e NÃO
+          positivacao) quando a query incluir filtro por representante ou
+          vendedor. Para total geral sem filtro, use positivacao.
+        type: sum
+        sql: POSITIVACAO_FLAG_REP
+
+      # ─────────────────────────────────────────────────────────────────────
+      # POSITIVAÇÃO PÚBLICA (canal público/direto)
+      # Regra: uma CIDADE é positivada APENAS UMA VEZ por mês.
+      # É contada no dia da sua PRIMEIRA NOTA do mês, desde que o saldo
+      # líquido TOTAL DO MÊS da cidade seja positivo (e também o do dia).
+      # ─────────────────────────────────────────────────────────────────────
+      - name: cidades_positivadas
+        description: >
+          Positivação Pública:número de cidades únicas que fizeram sua
+          PRIMEIRA venda com saldo líquido mensal positivo no período.
+          Uma cidade conta somente uma vez por mês. Válida para o canal público.
+          IS_PRIMEIRA_COMPRA_MES_PUBLICA=1 identifica essas linhas.
+          Use para perguntas sobre positivação pública, cidades positivadas.
+        type: number
+        sql: "COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_MES_PUBLICA = 1 THEN CIDADE ELSE NULL END)"
+
+      - name: positivacao_publica_por_representante
+        description: >
+          Positivação Pública por Representante: número de cidades únicas positivadas
+          calculado individualmente por representante (primeiro dia positivo por rep-cidade).
+          Use ESTE (e NÃO positivacao_publica) quando a query incluir filtro por
+          representante ou vendedor. Para total geral sem filtro, use positivacao_publica.
+        type: number
+        sql: "COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_PUBLICA_REP = 1 THEN CIDADE ELSE NULL END)"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # TICKET MÉDIO
+      # Privado: faturamento líquido / positivação privada (CAD_CGC)
+      # Público:  faturamento líquido / positivação pública (CIDADE)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: ticket_medio_global
+        description: >
+          Ticket Médio global (privado):SUM(TOTAL_LIQUIDO) dividido pelo número
+          de clientes positivados (positivacao = SUM(POSITIVACAO_FLAG)). Retorna
+          o valor médio faturado por cliente positivado no período. Use para
+          total geral SEM filtro de representante. COM filtro de representante,
+          use ticket_medio_rep.
+        type: number
+        sql: >
+          CASE
+            WHEN SUM(POSITIVACAO_FLAG) = 0 THEN 0
+            ELSE SUM(TOTAL_LIQUIDO) / NULLIF(SUM(POSITIVACAO_FLAG), 0)
+          END
+
+      - name: ticket_medio_por_representante
+        description: >
+          Ticket Médio por Representante: SUM(TOTAL_LIQUIDO) dividido pelo
+          número de clientes positivados por rep (positivacao_rep = SUM(POSITIVACAO_FLAG_REP)).
+          Use ESTE (e NÃO ticket_medio) quando a query incluir filtro por
+          representante ou vendedor. Para total geral, use ticket_medio.
+        type: number
+        sql: >
+          CASE
+            WHEN SUM(POSITIVACAO_FLAG_REP) = 0 THEN 0
+            ELSE SUM(TOTAL_LIQUIDO) / NULLIF(SUM(POSITIVACAO_FLAG_REP), 0)
+          END
+
+      - name: ticket_medio_canal_publico
+        description: >
+          Ticket Médio Público (canal público):SUM(TOTAL_LIQUIDO) dividido
+          pelo número de cidades positivadas (positivacao_publica). Retorna
+          o valor médio faturado por cidade positivada no período. Use para
+          total geral sem filtro de representante. Com filtro de representante,
+          use ticket_medio_publico_rep.
+        type: number
+        sql: >
+          CASE
+            WHEN COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_MES_PUBLICA = 1 THEN CIDADE END) = 0 THEN 0
+            ELSE SUM(TOTAL_LIQUIDO) / NULLIF(COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_MES_PUBLICA = 1 THEN CIDADE END), 0)
+          END
+
+      - name: ticket_medio_publico_por_representante
+        description: >
+          Ticket Médio Público por Representante: SUM(TOTAL_LIQUIDO) dividido
+          pelo número de cidades positivadas (positivacao_publica_rep, per-rep).
+          Use ESTE (e NÃO ticket_medio_publico) quando a query incluir filtro
+          por representante ou vendedor. Para total geral, use ticket_medio_publico.
+        type: number
+        sql: >
+          CASE
+            WHEN COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_PUBLICA_REP = 1 THEN CIDADE END) = 0 THEN 0
+            ELSE SUM(TOTAL_LIQUIDO) / NULLIF(COUNT(DISTINCT CASE WHEN IS_PRIMEIRA_COMPRA_PUBLICA_REP = 1 THEN CIDADE END), 0)
+          END
+
+
+    dimensions:
+      # Flag inteiro: 1 = esta linha é o primeiro dia do cliente no mês
+      # (e o saldo líquido mensal do cliente é positivo). Usado pela measure
+      # positivacao. Não expor ao usuário.
+      - name: flag_primeira_compra_mes
+        sql: IS_PRIMEIRA_COMPRA_MES
+        type: number
+        shown: false
+
+      # Flag inteiro: 1 = esta linha é o primeiro dia da CIDADE no mês
+      # (saldo líquido mensal e diário da cidade positivos). Usado por
+      # positivacao_publica (global). Não expor ao usuário.
+      - name: flag_primeira_compra_publica
+        sql: IS_PRIMEIRA_COMPRA_MES_PUBLICA
+        type: number
+        shown: false
+
+      # Flag inteiro per-representante: 1 = primeiro dia positivo de (REP, CIDADE)
+      # no mês. Usado por positivacao_publica_rep / ticket_medio_publico_rep.
+      # Não expor ao usuário.
+      - name: flag_primeira_compra_publica_rep
+        sql: IS_PRIMEIRA_COMPRA_PUBLICA_REP
+        type: number
+        shown: false
+
+      - name: chave_linha
+        sql: ROWID
+        type: string
+        primaryKey: true
+        shown: false
+        
+      - name: id_empresa
+        sql: EMPRESA_ID
+        type: string
+        description: "ID da empresa/filial."
+        
+      - name: id_cidade_nota
+        sql: CIDADE
+        type: string
+        description: "ID da cidade"
+        
+      - name: nome_municipio
+        sql: NOME_CIDADE
+        type: string
+        description: "Nome da cidade"
+        
+      - name: nome_cliente
+        sql: RAZAO_SOCIAL
+        type: string
+        description: "Nome da razão social"
+        
+      - name: num_nota_fiscal
+        sql: NUMERO_NOTA
+        type: string
+        description: "Número da nota"
+        
+      - name: num_pedido
+        sql: PEDIDO
+        type: string
+        description: "Número do pedido"
+      
+      - name: data_emissao
+        # Usado APENAS para filtro de intervalo em timeDimensions (dateRange).
+        # NÃO usar com granularity — Cube gera TRUNC(DATA_NOTA,'DD') que o
+        # driver do banco devolve como {} vazio. Para agrupar por dia, usar
+        # a dimension data_emissao_texto abaixo.
+        sql: DATA_NOTA
+        type: time
+        description: "Data da nota"
+
+      - name: data_emissao_texto
+        # Dimensão string para agrupamento DIÁRIO. TO_CHAR retorna '2026-03-01'
+        # que o driver do banco serializa perfeitamente. Usar em 'dimensions'
+        # quando a IA precisar de evolução dia a dia. O filtro de período
+        # continua em timeDimensions com data_nota (sem granularity).
+        sql: "TO_CHAR(DATA_NOTA, 'YYYY-MM-DD')"
+        type: string
+        description: "Data da nota no formato YYYY-MM-DD (use em dimensions para evolução diária, não em timeDimensions)"
+
+      - name: mes_emissao_texto
+        # Dimensão string para agrupamento MENSAL. Permite ao Cube agregar
+        # por mês sem que a IA precise somar valores diários manualmente.
+        # Usar quando a pergunta abrange 2+ meses e precisa de total por mês.
+        sql: "TO_CHAR(DATA_NOTA, 'YYYY-MM')"
+        type: string
+        description: "Mês da nota no formato YYYY-MM (use em dimensions para comparar meses — Cube faz o SUM, nunca some manualmente)"
+        
+      - name: id_vendedor
+        sql: VENDEDOR
+        type: string
+        description: "ID interno do vendedor/funcionário. Sempre usar representante como campo de filtro."
+
+      - name: nome_funcionario
+        sql: NOME_VENDEDOR
+        type: string
+        description: "Nome do vendedor/funcionário. Sempre usar representante como campo de filtro."
+
+      - name: id_departamento
+        sql: DEPARTAMENTO
+        type: string
+        description: "ID do departamento"
+        
+      - name: descricao_departamento
+        sql: NOME_DEPARTAMENTO
+        type: string
+        description: "Nome do departamento"
+        
+      - name: id_representante
+        sql: REPRESENTANTE
+        type: string
+        description: "ID do representante, sempre usar representante quando se referir a quem fez a venda, consultor, vendedor e sinonimos"
+        
+      - name: nome_rep
+        sql: NOME_REPRESENTANTE
+        type: string
+        description: "Nome do representante"
+        
+      - name: id_produto
+        sql: CODIGO_PRO
+        type: string
+        description: "ID do produto"
+        
+      - name: descricao_produto
+        sql: NOME_PRODUTO
+        type: string
+        description: "Nome do produto"
+        
+      - name: marca_produto
+        sql: MARCA
+        type: string
+        description: "Marca do produto"
+        
+      - name: cnpj_cliente_nota
+        sql: CAD_CGC
+        type: string
+        description: "CNPJ do cliente"
+        
+      - name: estado_cliente
+        sql: UF
+        type: string
+        description: "UF do cliente"
+        
+      - name: id_grupo_cliente
+        sql: CODIGO_GRUPO
+        type: string
+        description: "ID do grupo do cliente"
+        
+      - name: nome_grupo_cliente
+        sql: NOME_GRUPO
+        type: string
+        description: "Nome do grupo do cliente"
+

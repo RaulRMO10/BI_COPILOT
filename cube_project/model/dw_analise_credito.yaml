@@ -1,0 +1,105 @@
+cubes:
+  - name: dw_analise_credito
+    # ───────────────────────────────────────────────────────────────────────
+    # ANÁLISE DE CRÉDITO POR CLIENTE
+    #
+    # Consolida: limite de crédito, títulos atrasados, títulos a vencer,
+    # disponibilidade de crédito, inadimplência, potencial de compra,
+    # condição de pagamento.
+    #
+    # Tabela materializada atualizada periodicamente via agendador do banco.
+    # ───────────────────────────────────────────────────────────────────────
+    sql: SELECT * FROM DW_CREDITO_CLIENTES
+
+    measures:
+      - name: contagem_clientes_credito
+        sql: CAD_CGC
+        type: countDistinct
+        description: "Contagem de clientes únicos na base de análise de crédito."
+
+      - name: valor_limite_credito
+        sql: LIMITE_CREDITO
+        type: sum
+        description: "Soma do limite de crédito dos clientes selecionados."
+
+      - name: valor_em_atraso
+        sql: TOTAL_ATRASADO
+        type: sum
+        description: "Soma do valor total em atraso (títulos vencidos não pagos)."
+
+      - name: valor_a_vencer
+        sql: TOTAL_A_VENCER
+        type: sum
+        description: "Soma do valor total a vencer (títulos em aberto ainda não vencidos)."
+
+      - name: valor_vencer_30_dias
+        sql: TOTAL_A_VENCER_30_DIAS
+        type: sum
+        description: "Soma do valor a vencer nos próximos 30 dias."
+
+      - name: saldo_disponivel_credito
+        sql: TOTAL_DISPONIVEL_LIMITE
+        type: sum
+        description: "Soma do limite disponível (limite_credito - total_atrasado - total_a_vencer)."
+
+      - name: maximo_dias_atraso
+        sql: DIAS_ATRASADO
+        type: max
+        description: "Maior número de dias de atraso entre os clientes selecionados."
+
+      - name: soma_potencial_compra
+        sql: POTENCIAL_COMPRA
+        type: sum
+        description: "Soma do potencial de compra dos clientes selecionados."
+
+      - name: quantidade_inadimplentes
+        sql: "CASE WHEN {CUBE}.INADIMPLENTE = 'SIM' THEN 1 ELSE 0 END"
+        type: sum
+        description: "Quantidade de clientes inadimplentes (com títulos em atraso)."
+
+      - name: quantidade_em_analise
+        sql: "CASE WHEN {CUBE}.SUJEITO_ANALISE_CREDITO = 'SIM' THEN 1 ELSE 0 END"
+        type: sum
+        description: "Quantidade de clientes sujeitos a análise de crédito (inadimplentes, prazo especial ou sem histórico)."
+
+    dimensions:
+      - name: cnpj_cliente
+        sql: CAD_CGC
+        type: string
+        primaryKey: true
+        description: "CNPJ do cliente."
+
+      - name: nome_empresa
+        sql: RAZAO_SOCIAL
+        type: string
+        description: "Razão social do cliente."
+
+      - name: id_representante
+        sql: REPRESENTANTE
+        type: string
+        description: "ID do representante (3 dígitos)."
+
+      - name: id_departamento
+        sql: DEPARTAMENTO
+        type: string
+        description: "ID do departamento."
+
+      - name: em_analise_credito
+        sql: SUJEITO_ANALISE_CREDITO
+        type: string
+        description: "SIM ou NAO — indica se o cliente está sujeito a análise de crédito."
+
+      - name: status_inadimplencia
+        sql: INADIMPLENTE
+        type: string
+        description: "SIM ou NAO — indica se o cliente tem títulos em atraso."
+
+      - name: forma_pagamento
+        sql: CONDICAO_PAGAMENTO
+        type: string
+        description: "Condição de pagamento: 'A VISTA' ou 'A PRAZO'."
+
+      - name: vigencia_limite_credito
+        sql: DATA_LIMITE_CREDITO
+        type: time
+        description: "Data de vigência/atualização do limite de crédito do cliente."

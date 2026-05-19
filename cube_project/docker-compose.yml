@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  cube:
+    image: cubejs/cube:latest
+    ports:
+      - "4000:4000"
+      - "3200:3200"
+    env_file:
+      - .env
+    volumes:
+      - .:/cube/conf
+    depends_on:
+      - cubestore
+    environment:
+      - CUBEJS_CUBESTORE_HOST=cubestore
+
+  cubestore:
+    image: cubejs/cubestore:latest
+    ports:
+      - "3030:3030"
+    volumes:
+      - .cubestore:/cubestore/data

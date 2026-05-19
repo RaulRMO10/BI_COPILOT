@@ -1,0 +1,106 @@
+cubes:
+  - name: dw_estoque_produto_pai
+    # ───────────────────────────────────────────────────────────────────────
+    # ESTOQUE E HIERARQUIA DE PRODUTOS (PAI → FILHO)
+    #
+    #
+    # Cada linha = 1 produto (filho). O CODIGO_PAI agrupa produtos
+    # semelhantes (mesma molécula/apresentação) sob um "produto-pai".
+    #
+    # ESTOQUE       → estoque unitário do produto filho
+    # ESTOQUE_GRUPO → estoque consolidado de TODOS os filhos do mesmo pai
+    #                 (já vem pré-calculado na view — NÃO somar ESTOQUE dos filhos)
+    #
+    # JOIN com dw_vendas: por CODIGO_PRO (belongsTo).
+    # Permite cruzar estoque com faturamento/vendas na mesma query.
+    #
+    # ⚠ REGRAS DE AGREGAÇÃO AO AGRUPAR POR PRODUTO-PAI:
+    #   · Faturamento (R$)       → SUM dos filhos (aditivo)
+    #   · Estoque individual     → SUM de ESTOQUE dos filhos (cada filho tem seu estoque)
+    #   · Estoque do grupo       → usar ESTOQUE_PAI (já consolidado, NÃO somar)
+    #   · Margem (%)             → média ponderada pelo faturamento (NUNCA AVG simples)
+    #   · Ticket Médio           → recalcular: faturamento total / nº clientes distintos
+    #   · Positivação            → COUNT DISTINCT de clientes (NUNCA somar)
+    # ───────────────────────────────────────────────────────────────────────
+    sql: >
+      SELECT
+        CODIGO_PRO,
+        NOME_PRODUTO,
+        RAZAO_SOCIAL,
+        CAD_CGC_INDUSTRIA,
+        MARCA,
+        ESTOQUE,
+        CODIGO_PAI,
+        PRODUTO_PAI,
+        ESTOQUE_GRUPO
+      FROM DW_ESTOQUE_PRODUTOS
+
+    measures:
+      - name: quantidade_estoque_filho
+        sql: ESTOQUE
+        type: sum
+        description: >
+          Estoque do(s) produto(s) filho(s) selecionados (soma unitária).
+          Quando agrupado por produto-pai, representa a soma dos estoques
+          de todos os filhos daquele pai.
+
+      - name: quantidade_estoque_grupo
+        sql: ESTOQUE_GRUPO
+        type: max
+        description: >
+          Estoque consolidado do grupo do produto-pai.
+          Já vem pré-calculado na view — use MAX (não SUM) pois
+          TODOS os filhos do mesmo pai carregam o mesmo valor de ESTOQUE_GRUPO.
+          Use esta measure quando agrupar por CODIGO_PAI/PRODUTO_PAI.
+
+      - name: variacoes_produto
+        sql: CODIGO_PRO
+        type: countDistinct
+        description: >
+          Quantidade de produtos-filho distintos.
+          Útil para saber quantas variações existem dentro de um grupo pai.
+
+    dimensions:
+      - name: id_produto
+        sql: CODIGO_PRO
+        type: string
+        primaryKey: true
+        description: >
+          Código do produto filho (7 dígitos). Chave de ligação com dw_vendas.
+
+      - name: descricao_produto
+        sql: NOME_PRODUTO
+        type: string
+        description: >
+          Nome/descrição do produto filho.
+
+      - name: nome_laboratorio
+        sql: RAZAO_SOCIAL
+        type: string
+        description: >
+          Razão social da indústria/laboratório fabricante do produto.
+
+      - name: cnpj_laboratorio
+        sql: CAD_CGC_INDUSTRIA
+        type: string
+        description: >
+          CNPJ da indústria/laboratório fabricante.
+
+      - name: marca_produto
+        sql: MARCA
+        type: string
+        description: >
+          Marca comercial do produto.
+
+      - name: id_produto_pai
+        sql: CODIGO_PAI
+        type: string
+        description: >
+          Código do produto-pai que agrupa os filhos semelhantes.
+          Use para agrupar produtos por família/apresentação.
+
+      - name: nome_produto_pai
+        sql: PRODUTO_PAI
+        type: string
+        description: >
+          Nome/descrição do produto-pai (grupo).
