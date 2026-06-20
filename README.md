@@ -2,6 +2,16 @@
 
 Sistema de Business Intelligence conversacional que permite consultar indicadores comerciais em **linguagem natural** (português). O usuário faz perguntas como _"Qual foi o faturamento da Ana em março?"_ e o agente decide automaticamente qual ferramenta usar, executa a query e devolve uma resposta formatada.
 
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-Agentic-1C3C3C)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991?logo=openai&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![Cube.js](https://img.shields.io/badge/Cube.js-Semantic_Layer-FF6492)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-FAC51C)
+
+> 🖼️ _Screenshot/GIF da interface conversacional aqui — mostre uma pergunta real e a resposta formatada._
+
 ---
 
 ## Demonstração
@@ -133,8 +143,8 @@ Os 5 com maior histórico de compra são: ...
 ### 1. Clonar e instalar dependências
 
 ```bash
-git clone https://github.com/SEU_USUARIO/bi-copilot.git
-cd bi-copilot
+git clone https://github.com/RaulRMO10/BI_COPILOT.git
+cd BI_COPILOT
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # ou: source .venv/bin/activate  # Linux/macOS
@@ -287,6 +297,12 @@ bi-copilot/
         ├── premiacoes_metas.yaml
         └── dw_estoque_produto_pai.yaml
 ```
+
+---
+
+## Autor
+
+**Raul Martins** · [GitHub @RaulRMO10](https://github.com/RaulRMO10) · [LinkedIn](https://www.linkedin.com/in/raulrmo/)
 
 ---
 
