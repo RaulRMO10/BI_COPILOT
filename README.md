@@ -4,7 +4,7 @@ Sistema de Business Intelligence conversacional que permite consultar indicadore
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-Agentic-1C3C3C)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991?logo=openai&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.4--mini-412991?logo=openai&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![Cube.js](https://img.shields.io/badge/Cube.js-Semantic_Layer-FF6492)
@@ -47,7 +47,7 @@ Os 5 com maior histórico de compra são: ...
 
 1. Usuário digita a pergunta na UI (Streamlit ou via API REST)
 2. FastAPI autentica o token e repassa ao LangGraph
-3. O agente (GPT-4o) raciocina e escolhe qual ferramenta chamar
+3. O agente (GPT-5.4-mini) raciocina e escolhe qual ferramenta chamar
 4. A ferramenta executa a query (Cube.js ou SQL direto) e retorna JSON
 5. O agente interpreta o resultado e gera a resposta em português
 6. O histórico é persistido no banco para retomada em sessões futuras
@@ -120,7 +120,7 @@ Os 5 com maior histórico de compra são: ...
 
 | Camada | Tecnologia |
 |---|---|
-| LLM | OpenAI GPT-4o via LangChain |
+| LLM | OpenAI GPT-5.4-mini via LangChain |
 | Orquestração | LangGraph (agentic workflow com state machine) |
 | Backend API | FastAPI + Uvicorn (SSE streaming) |
 | Interface | Streamlit |
