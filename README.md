@@ -12,6 +12,8 @@ Sistema de Business Intelligence conversacional que permite consultar indicadore
 
 > 🖼️ _Screenshot/GIF da interface conversacional aqui — mostre uma pergunta real e a resposta formatada._
 
+> ℹ️ **Sobre este projeto:** desenvolvido originalmente em ambiente profissional e disponibilizado aqui **com autorização**, para fins de estudo e portfólio (pós-graduação em **Agentes de IA — FIAP**). Credenciais e dados reais foram removidos; nomes de tabelas e exemplos são ilustrativos.
+
 ---
 
 ## Demonstração
