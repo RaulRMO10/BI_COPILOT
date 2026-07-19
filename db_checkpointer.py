@@ -1,15 +1,15 @@
 import json
-from typing import Any, Dict, Optional, Tuple, AsyncIterator, Tuple, List, Sequence
+import base64
+from typing import Any, Dict, Optional, AsyncIterator
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointTuple, CheckpointMetadata, SerializerProtocol
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-import oracledb
 from contextlib import contextmanager
 
 class DBCheckpointSaver(BaseCheckpointSaver):
     """
     A persistent checkpointer that saves LangGraph states in the database.
-    Uses the AI_SESSAO_CHAT table.
+    Uses the AI_SESSAO_CHAT table (PostgreSQL).
     """
 
     def __init__(
@@ -42,45 +42,43 @@ class DBCheckpointSaver(BaseCheckpointSaver):
                 query = """
                     SELECT CHECKPOINT_DATA, METADATA
                     FROM AI_SESSAO_CHAT
-                    WHERE SESSION_ID = :session_id AND CHECKPOINT_ID = :checkpoint_id
+                    WHERE SESSION_ID = %(session_id)s AND CHECKPOINT_ID = %(checkpoint_id)s
                 """
-                cursor.execute(query, session_id=thread_id, checkpoint_id=checkpoint_id)
+                cursor.execute(query, {"session_id": thread_id, "checkpoint_id": checkpoint_id})
             else:
                 query = """
                     SELECT CHECKPOINT_DATA, METADATA, CHECKPOINT_ID
                     FROM AI_SESSAO_CHAT
-                    WHERE SESSION_ID = :session_id
+                    WHERE SESSION_ID = %(session_id)s
                     ORDER BY CREATED_AT DESC
-                    FETCH FIRST 1 ROWS ONLY
+                    LIMIT 1
                 """
-                cursor.execute(query, session_id=thread_id)
+                cursor.execute(query, {"session_id": thread_id})
 
             row = cursor.fetchone()
             if not row:
                 return None
 
-            checkpoint_data = row[0].read() if hasattr(row[0], 'read') else row[0]
-            metadata_data = row[1].read() if row[1] and hasattr(row[1], 'read') else (row[1] or "{}")
+            checkpoint_data = row[0]
+            metadata_data = row[1] or "{}"
 
-            import json
-            import base64
             try:
                 cp_list = json.loads(checkpoint_data)
                 cp_tuple = (cp_list[0], base64.b64decode(cp_list[1]))
-            except:
+            except Exception:
                 cp_tuple = ("json", checkpoint_data.encode("utf-8"))
             checkpoint = self.serde.loads_typed(cp_tuple)
 
             try:
                 md_list = json.loads(metadata_data)
                 md_tuple = (md_list[0], base64.b64decode(md_list[1]))
-            except:
+            except Exception:
                 md_tuple = ("json", metadata_data.encode("utf-8"))
             metadata = self.serde.loads_typed(md_tuple)
 
             # Extract checkpoint_id if fetching latest
             if not checkpoint_id:
-               checkpoint_id = row[2]
+                checkpoint_id = row[2]
 
             return CheckpointTuple(
                 config={"configurable": {"thread_id": thread_id, "checkpoint_id": checkpoint_id}},
@@ -100,12 +98,10 @@ class DBCheckpointSaver(BaseCheckpointSaver):
         metadata: CheckpointMetadata,
         new_versions: dict[str, str | float | int]
     ) -> RunnableConfig:
-        """Save a checkpoint to the database."""
+        """Save a checkpoint to the database (upsert via ON CONFLICT)."""
         thread_id = config["configurable"]["thread_id"]
         checkpoint_id = checkpoint["id"]
 
-        import json
-        import base64
         cp_type, cp_bytes = self.serde.dumps_typed(checkpoint)
         checkpoint_data_str = json.dumps([cp_type, base64.b64encode(cp_bytes).decode('ascii')])
 
@@ -114,17 +110,12 @@ class DBCheckpointSaver(BaseCheckpointSaver):
 
         with self._get_cursor() as (cursor, conn):
             query = """
-                MERGE INTO AI_SESSAO_CHAT tgt
-                USING (SELECT :1 as SESSION_ID, :2 as CHECKPOINT_ID, :3 as CHECKPOINT_DATA, :4 as METADATA FROM DUAL) src
-                ON (tgt.SESSION_ID = src.SESSION_ID AND tgt.CHECKPOINT_ID = src.CHECKPOINT_ID)
-                WHEN MATCHED THEN
-                    UPDATE SET CHECKPOINT_DATA = src.CHECKPOINT_DATA, METADATA = src.METADATA
-                WHEN NOT MATCHED THEN
-                    INSERT (SESSION_ID, CHECKPOINT_ID, CHECKPOINT_DATA, METADATA)
-                    VALUES (src.SESSION_ID, src.CHECKPOINT_ID, src.CHECKPOINT_DATA, src.METADATA)
+                INSERT INTO AI_SESSAO_CHAT (SESSION_ID, CHECKPOINT_ID, CHECKPOINT_DATA, METADATA)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (SESSION_ID, CHECKPOINT_ID)
+                DO UPDATE SET CHECKPOINT_DATA = EXCLUDED.CHECKPOINT_DATA,
+                              METADATA        = EXCLUDED.METADATA
             """
-            # Parâmetros 3 e 4 precisam ser declarados como CLOB para evitar ORA-01461
-            cursor.setinputsizes(None, None, oracledb.DB_TYPE_CLOB, oracledb.DB_TYPE_CLOB)
             cursor.execute(query, (thread_id, checkpoint_id, checkpoint_data_str, metadata_str))
             conn.commit()
 

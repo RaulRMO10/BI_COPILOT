@@ -17,6 +17,9 @@ __pycache__/
 *.pyd
 .Python
 
+# ─── Dados locais (Olist/IBGE/CMED — não commitar; ver README para fontes) ────
+data/
+
 # ─── Banco de dados vetorial (ChromaDB) ───────────────────────────────────────
 chroma_data/
 
@@ -32,6 +35,9 @@ chroma_data/
 *.swo
 .DS_Store
 Thumbs.db
+
+# ─── LangGraph dev server (estado local do Studio) ────────────────────────────
+.langgraph_api/
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 .claude/settings.local.json

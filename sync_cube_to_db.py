@@ -75,18 +75,18 @@ def sync_to_db(metrics):
         sql_insert = """
             INSERT INTO AI_CONTROLE_METRICAS
             (NOME_METRICA, TIPO, CUBE_FONTE, STATUS)
-            VALUES (:1, :2, :3, 'INATIVA')
+            VALUES (%s, %s, %s, 'INATIVA')
+            ON CONFLICT (NOME_METRICA) DO NOTHING
         """
 
         for metric in metrics:
             chave = metric['nome']
             if chave not in existing_metrics:
                 try:
-                    cursor.execute(sql_insert, [metric['nome'], metric['tipo'], metric['cubo']])
-                    inserted_count += 1
+                    cursor.execute(sql_insert, (metric['nome'], metric['tipo'], metric['cubo']))
+                    inserted_count += cursor.rowcount
                 except Exception as ex:
-                    if 'ORA-00001' not in str(ex):
-                        print(f"Erro inserindo {chave}: {ex}")
+                    print(f"Erro inserindo {chave}: {ex}")
 
         conn.commit()
         print(f"Sincronização concluída! {inserted_count} novas métricas/dimensões dos YAMLs inseridas no banco como INATIVAS.")

@@ -24,7 +24,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from langchain_core.messages import HumanMessage
 from langchain_core.callbacks import BaseCallbackHandler
 
-import oracledb
 from tools import get_connection
 from langgraph_app import get_compiled_graph
 
@@ -38,12 +37,10 @@ def _registrar_chat(session_id: str, funcionario: str, titulo: str) -> None:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            """MERGE INTO AI_CHATS T
-               USING DUAL ON (T.SESSION_ID = :sid)
-               WHEN MATCHED THEN UPDATE SET TITULO = :titulo
-               WHEN NOT MATCHED THEN INSERT (SESSION_ID, FUNCIONARIO, TITULO, CREATED_AT)
-               VALUES (:sid, :func, :titulo, SYSTIMESTAMP AT TIME ZONE 'America/Sao_Paulo')""",
-            sid=session_id, func=funcionario, titulo=titulo[:300],
+            """INSERT INTO AI_CHATS (SESSION_ID, FUNCIONARIO, TITULO, CREATED_AT)
+               VALUES (%(sid)s, %(func)s, %(titulo)s, now() AT TIME ZONE 'America/Sao_Paulo')
+               ON CONFLICT (SESSION_ID) DO UPDATE SET TITULO = EXCLUDED.TITULO""",
+            {"sid": session_id, "func": funcionario, "titulo": titulo[:300]},
         )
         conn.commit()
         cur.close()
@@ -89,11 +86,11 @@ def _registrar_conversa(session_id: str, funcionario: str,
         cur.execute(
             """INSERT INTO AI_CONVERSAS
                (SESSION_ID, FUNCIONARIO, PERGUNTA, RESPOSTA, SQL_EXECUTADO, CREATED_AT)
-               VALUES (:sid, :func, :perg, :resp, :sqls,
-                       SYSTIMESTAMP AT TIME ZONE 'America/Sao_Paulo')""",
-            sid=session_id, func=funcionario,
-            perg=pergunta, resp=resposta,
-            sqls=sql_executado,
+               VALUES (%(sid)s, %(func)s, %(perg)s, %(resp)s, %(sqls)s,
+                       now() AT TIME ZONE 'America/Sao_Paulo')""",
+            {"sid": session_id, "func": funcionario,
+             "perg": pergunta, "resp": resposta,
+             "sqls": sql_executado},
         )
         conn.commit()
         cur.close()
@@ -111,10 +108,10 @@ def _listar_chats(funcionario: str) -> list[dict]:
             """SELECT SESSION_ID, TITULO,
                       TO_CHAR(CREATED_AT, 'DD/MM/YYYY HH24:MI') AS DT_CRIACAO
                FROM AI_CHATS
-               WHERE FUNCIONARIO = :func
+               WHERE FUNCIONARIO = %(func)s
                ORDER BY CREATED_AT DESC
-               FETCH FIRST 30 ROWS ONLY""",
-            func=funcionario,
+               LIMIT 30""",
+            {"func": funcionario},
         )
         rows = cur.fetchall()
         cur.close()
@@ -132,14 +129,14 @@ def _deletar_chat(session_id: str, funcionario: str) -> bool:
         cur  = conn.cursor()
         # Garante que o chat pertence ao funcionário (sem acesso cruzado)
         cur.execute(
-            "SELECT COUNT(*) FROM AI_CHATS WHERE SESSION_ID=:sid AND FUNCIONARIO=:func",
-            sid=session_id, func=funcionario,
+            "SELECT COUNT(*) FROM AI_CHATS WHERE SESSION_ID=%(sid)s AND FUNCIONARIO=%(func)s",
+            {"sid": session_id, "func": funcionario},
         )
         if cur.fetchone()[0] == 0:
             cur.close(); conn.close()
             return False
-        cur.execute("DELETE FROM AI_SESSAO_CHAT WHERE SESSION_ID = :sid", sid=session_id)
-        cur.execute("DELETE FROM AI_CHATS WHERE SESSION_ID = :sid", sid=session_id)
+        cur.execute("DELETE FROM AI_SESSAO_CHAT WHERE SESSION_ID = %(sid)s", {"sid": session_id})
+        cur.execute("DELETE FROM AI_CHATS WHERE SESSION_ID = %(sid)s", {"sid": session_id})
         conn.commit()
         cur.close()
         conn.close()
@@ -160,8 +157,8 @@ def _validar_ownership_sessao(session_id: str, funcionario: str) -> bool:
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM AI_CHATS WHERE SESSION_ID=:sid AND FUNCIONARIO=:func",
-            sid=session_id, func=funcionario,
+            "SELECT COUNT(*) FROM AI_CHATS WHERE SESSION_ID=%(sid)s AND FUNCIONARIO=%(func)s",
+            {"sid": session_id, "func": funcionario},
         )
         count = cur.fetchone()[0]
         cur.close()

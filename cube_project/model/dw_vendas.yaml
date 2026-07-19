@@ -120,7 +120,7 @@ cubes:
             ) AS SALDO_DIA_CGC,
             ROW_NUMBER() OVER (
               PARTITION BY D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
-              ORDER BY ROWID
+              ORDER BY D.ID
             ) AS RN_CGC,
             SUM(D.TOTAL_LIQUIDO) OVER (
               PARTITION BY D.CIDADE, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
@@ -143,7 +143,7 @@ cubes:
             ) AS SALDO_DIA_CGC_REP,
             ROW_NUMBER() OVER (
               PARTITION BY D.REPRESENTANTE, D.CAD_CGC, TO_CHAR(D.DATA_NOTA, 'YYYYMMDD')
-              ORDER BY ROWID
+              ORDER BY D.ID
             ) AS RN_CGC_REP
           FROM DW_VENDAS D
         ) T0
@@ -162,7 +162,7 @@ cubes:
       # — o TRUNC garante que a meta do mês correto seja sempre usada.
       - name: premiacoes_metas
         sql: >
-          TRUNC({CUBE}.DATA_NOTA,'MM') = TRUNC({premiacoes_metas}.MES_ANO,'MM')
+          date_trunc('month', {CUBE}.DATA_NOTA) = date_trunc('month', {premiacoes_metas}.MES_ANO)
           AND {CUBE}.REPRESENTANTE = {premiacoes_metas}.REPRESENTANTE
         relationship: belongsTo
 
@@ -374,7 +374,7 @@ cubes:
         shown: false
 
       - name: chave_linha
-        sql: ROWID
+        sql: ID
         type: string
         primaryKey: true
         shown: false

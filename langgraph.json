@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "bi_copilot": "./langgraph_app.py:build_graph"
+  },
+  "env": ".env"
+}

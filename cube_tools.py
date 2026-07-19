@@ -31,7 +31,7 @@ def executar_consulta_cube(query_json_str: str) -> str:
     
     Args:
         query_json_str: String contendo o JSON válido da query para o Cube.
-                       Exemplo: {"measures": ["DW_VENDAS.faturamento_liquido"], "dimensions": ["DW_VENDAS.nome_produto"]}
+                       Exemplo: {"measures": ["dw_vendas.faturamento_liquido"], "dimensions": ["dw_vendas.descricao_produto"]}
                      
     Returns:
         String com os dados retornados do banco pelo Cube (em formato JSON) ou a mensagem de erro.
@@ -40,10 +40,10 @@ def executar_consulta_cube(query_json_str: str) -> str:
         # Analisar para garantir que é um JSON válido
         query_obj = json.loads(query_json_str)
 
-        # FIX 6 — continueWait nativo: o Cube.dev bloqueia internamente até o
-        # pre-aggregate estar pronto e responde em um único request.
-        # Elimina o loop de polling com time.sleep(2) × 15 que travava a thread.
-        query_obj["renewQuery"] = True
+        # FIX 6 — continueWait (query param abaixo) faz o Cube aguardar server-side
+        # e responder em um único request, sem loop de polling com sleep.
+        # Nota: "renewQuery" dentro do objeto de query foi removido — versões
+        # atuais do Cube rejeitam a chave com 400 "Invalid query format".
 
         token = generate_cube_token()
         headers = {
