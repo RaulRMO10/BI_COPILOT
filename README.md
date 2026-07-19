@@ -1,58 +1,101 @@
 # BI Copilot — Assistente Comercial com IA Generativa
 
-Sistema de Business Intelligence conversacional que permite consultar indicadores comerciais em **linguagem natural** (português). O usuário faz perguntas como _"Qual foi o faturamento da Ana em março?"_ e o agente decide automaticamente qual ferramenta usar, executa a query e devolve uma resposta formatada.
+Sistema de Business Intelligence conversacional que permite consultar indicadores comerciais em **linguagem natural** (português). O usuário faz perguntas como _"Quais meus 5 melhores clientes deste mês?"_ e o agente decide qual ferramenta usar, executa a query na camada semântica e devolve uma resposta executiva — **respeitando o perfil de acesso de quem pergunta**.
 
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-Agentic-1C3C3C)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.4--mini-412991?logo=openai&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![LLM](https://img.shields.io/badge/LLM-GPT--5.1_%7C_Claude_Sonnet_5-412991)
+![PostgreSQL](https://img.shields.io/badge/Supabase-PostgreSQL_17-3FCF8E?logo=supabase&logoColor=white)
 ![Cube.js](https://img.shields.io/badge/Cube.js-Semantic_Layer-FF6492)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-FAC51C)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![LangSmith](https://img.shields.io/badge/LangSmith-Tracing-1C3C3C)
 
 > 🖼️ _Screenshot/GIF da interface conversacional aqui — mostre uma pergunta real e a resposta formatada._
 
-> ℹ️ **Sobre este projeto:** desenvolvido originalmente em ambiente profissional e disponibilizado aqui **com autorização**, para fins de estudo e portfólio (pós-graduação em **Agentes de IA — FIAP**). Credenciais e dados reais foram removidos; nomes de tabelas e exemplos são ilustrativos.
+> ℹ️ **Sobre este projeto:** desenvolvido originalmente em ambiente profissional e disponibilizado aqui **com autorização**, para fins de estudo e portfólio (pós-graduação em **Agentes de IA — FIAP**). Esta versão roda em **modo demonstração**: banco próprio no Supabase com dados públicos e sintéticos — **nenhum dado real de empresa**.
 
 ---
 
 ## Demonstração
 
 ```
-Usuário: Qual o ranking dos meus clientes inativos este mês?
+[login: brenda — Consultora, carteira privada 001]
 
-Assistente: [consulta a camada semântica Cube.js]
-Encontrei 12 clientes no ranking RED e 3 sem nenhuma venda em abril/2025.
-Os 5 com maior histórico de compra são: ...
+Usuária: Quais são meus 5 melhores clientes deste mês?
+
+Assistente: Analisando este mês (01/07 a 19/07)...
+1. DROGARIA CARDOSO VASCONCELOS LTDA — R$ 1.838,72
+2. CLINICA DAS NEVES LTDA — R$ 1.837,92
+...
+(o filtro do representante 001 foi injetado pelo código — a consultora
+só enxerga a própria carteira, mesmo que o LLM tente o contrário)
 ```
+
+A interface traz um expander **"Bastidores"** em cada resposta: o JSON gerado para o Cube.js (já com os filtros de segurança), o SQL real executado no banco e o passo a passo de decisão do agente.
 
 ---
 
 ## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Interface Web                                              │
-│  Streamlit (app.py) ──────► FastAPI (fastapi_server.py)     │
-│                                      │                      │
-│                          LangGraph Agentic Workflow          │
-│                          (langgraph_app.py)                  │
-│                                      │                      │
-│              ┌───────────────────────┼──────────────────┐   │
-│              ▼                       ▼                   ▼   │
-│         Banco de Dados        Cube.js Semantic       ChromaDB │
-│         (tools.py)           Layer (cube_tools.py)  (RAG)    │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  Streamlit (app.py)                FastAPI (fastapi_server.py) │
+│  chat com login de perfis          bridge REST p/ frontends    │
+│            │                                  │                │
+│            └──────────────┬───────────────────┘                │
+│                LangGraph Agentic Workflow                      │
+│                (langgraph_app.py: prompt + RLS fail-closed)    │
+│                           │                                    │
+│              ┌────────────┴─────────────┐                      │
+│              ▼                          ▼                      │
+│        Tools de banco             Cube.js Semantic Layer       │
+│        (tools.py)                 (cube_tools.py → :4000)      │
+│              │                          │                      │
+│              └────────────┬─────────────┘                      │
+│                           ▼                                    │
+│              PostgreSQL 17 (Supabase)                          │
+│                                                                │
+│  Observabilidade: LangSmith (tracing) + Studio (langgraph.json)│
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### Fluxo de uma pergunta
 
-1. Usuário digita a pergunta na UI (Streamlit ou via API REST)
-2. FastAPI autentica o token e repassa ao LangGraph
-3. O agente (GPT-5.4-mini) raciocina e escolhe qual ferramenta chamar
-4. A ferramenta executa a query (Cube.js ou SQL direto) e retorna JSON
-5. O agente interpreta o resultado e gera a resposta em português
-6. O histórico é persistido no banco para retomada em sessões futuras
+1. O usuário loga na UI (perfil simulado: diretor ou consultor) e pergunta em português
+2. O agente recebe o `user_context` e monta o prompt com as regras do perfil
+3. O LLM (configurável: GPT-5.1 ou Claude Sonnet 5) escolhe a ferramenta e gera a query
+4. O `secure_tool_node` intercepta a chamada e **injeta os filtros de segurança no código** (fail closed)
+5. Cube.js traduz a query semântica em SQL e consulta o Postgres
+6. O agente interpreta o resultado e responde em linguagem executiva
+7. Checkpoints e traces ficam persistidos (Supabase + LangSmith)
+
+---
+
+## Modo demonstração — os dados
+
+O banco demo é construído por um pipeline reproduzível (`seed/`, seed fixo = 42) a partir de fontes públicas:
+
+| Fonte | Uso |
+|---|---|
+| **[Olist Brazilian E-Commerce](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)** (Kaggle) | ~100 mil pedidos reais (2016–2018) viram as transações de `dw_vendas`, **re-datados** em múltiplos de 7 dias para uma janela móvel recente (o "mês atual" sempre tem dados) |
+| **CMED/ANVISA** (lista pública de preços) | Catálogo de produtos: 25 mil apresentações de medicamentos reais, com laboratório e hierarquia produto-pai |
+| **IBGE** (API de localidades) | Códigos oficiais de municípios, UF e região |
+| **Camadas sintéticas** | O que não existe em dado público: 30 representantes territoriais, carteiras com ranking ABC, metas, crédito/inadimplência, estoque e a recorrência de compra da base fiel |
+
+Resultado: ~196 mil linhas de vendas, 96 mil clientes com CNPJ fake (dígitos verificadores válidos), faturamento mensal estável de ~R$ 3 mi e distribuição ABC realista — dentro do free tier do Supabase.
+
+> **Atribuição:** o dataset Olist é licenciado sob [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) — uso não comercial com atribuição, como neste projeto. Dados da CMED/ANVISA e IBGE são públicos. Nomes de empresas, pessoas e CNPJs exibidos são **sintéticos**.
+
+### Usuários de demonstração (tela de login)
+
+Senha única: `demo123`
+
+| Login | Perfil | O que a segurança faz |
+|---|---|---|
+| `joao` | 👔 Diretor | Acesso total: quadrante completo, qualquer carteira |
+| `brenda` | 💼 Consultora — carteira privada (rep 001) | Filtro do representante injetado no código; dados de outros reps bloqueados |
+| `hellena` | 🏛️ Consultora — canal público (rep 029) | "Cliente" vira município; carteira por cidade |
 
 ---
 
@@ -60,61 +103,47 @@ Os 5 com maior histórico de compra são: ...
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `app.py` | Interface Streamlit com histórico e abas de debug |
-| `fastapi_server.py` | API REST (streaming SSE + endpoints de gestão de chats) |
-| `langgraph_app.py` | Orquestrador LangGraph: state machine, system prompt, RLS |
-| `tools.py` | Ferramentas de banco: busca fuzzy de representantes, clientes, produtos |
-| `cube_tools.py` | Ferramenta Cube.js: executa queries JSON na camada semântica |
-| `db_checkpointer.py` | Persiste checkpoints do LangGraph no banco |
-| `sync_cube_to_db.py` | Sincroniza metadados do Cube.js para o banco (dicionário de métricas) |
-| `sync_regras_to_chroma.py` | Vetoriza regras de negócio do banco para ChromaDB (RAG) |
+| `app.py` | Interface Streamlit: login de perfis, chat e bastidores (JSON Cube/SQL/fluxo) |
+| `fastapi_server.py` | API REST (streaming SSE + gestão de chats) para integração com frontends |
+| `langgraph_app.py` | Orquestrador LangGraph: state machine, system prompt, RLS fail-closed |
+| `tools.py` | Ferramentas de banco (psycopg + pool): busca fuzzy de reps/clientes/produtos, SQL livre com blocklist |
+| `cube_tools.py` | Ferramenta Cube.js: executa queries JSON na camada semântica (JWT de curta duração) |
+| `db_checkpointer.py` | Persiste checkpoints do LangGraph no Postgres (upsert `ON CONFLICT`) |
+| `sync_cube_to_db.py` | Sincroniza metadados dos cubos para o dicionário de métricas |
+| `seed/` | Pipeline do banco demo: DDL + carga Olist/CMED/IBGE + camadas sintéticas + validação |
+| `langgraph.json` | Registro do grafo para o LangSmith Studio (`langgraph dev`) |
 
 ### Camada Semântica — Cube.js (`cube_project/model/`)
 
 | Cubo | Dados |
 |---|---|
-| `dw_vendas` | Faturamento, margem, positivação e ticket médio por representante/dia |
-| `dw_carteira_clientes` | Carteira de clientes com ranking ABC e histórico trimestral |
-| `dw_carteira_municipios` | Carteira por município (setor público) |
+| `dw_vendas` | Faturamento, margem, positivação (privada e pública) e ticket médio |
+| `dw_ranking_clientes` | Carteira de clientes com ranking ABC e histórico trimestral |
+| `dw_ranking_municipios` | Carteira por município (canal público) |
 | `dw_analise_credito` | Limite de crédito, inadimplência e potencial de compra |
-| `premiacoes_metas` | Metas mensais por representante (faturamento, margem, positivação) |
-| `dw_estoque_produto_pai` | Estoque consolidado por produto-pai |
+| `premiacoes_metas` | Metas mensais por representante (faturamento, margem, ticket, positivação) |
+| `dw_estoque_produto_pai` | Estoque consolidado por produto-pai (catálogo CMED) |
 
-### Tabelas de domínio consultadas pelo agente
+### Tabelas do banco (criadas pelo pipeline `seed/`)
 
-| Tabela | Conteúdo |
-|---|---|
-| `TB_FUNCIONARIOS` | Cadastro de funcionários (tipo, departamento, representante) |
-| `TB_REPRESENTANTES` | Dados dos representantes comerciais |
-| `TB_DEPARTAMENTOS` | Cadastro de departamentos |
-| `TB_GRUPOS_CLIENTES` | Grupos de clientes |
-| `TB_CIDADES` | Cidades e municípios |
-| `TB_PRODUTOS` | Catálogo de produtos |
-| `TB_CLIENTES` | Cadastro de clientes (CNPJ, razão social) |
-
-### Tabelas de infraestrutura criadas pelo sistema
-
-| Tabela | Uso |
-|---|---|
-| `AI_CHATS` | Metadados de sessões de chat por usuário |
-| `AI_CONVERSAS` | Auditoria completa: pergunta, resposta e SQL executado |
-| `AI_SESSAO_CHAT` | Checkpoints LangGraph (retomada de conversa) |
-| `AI_CONTROLE_METRICAS` | Dicionário de métricas/dimensões do Cube.js |
-| `AI_REGRAS_NEGOCIO` | Regras de negócio para RAG (vetorizadas no ChromaDB) |
+- **Domínio (`tb_*`)** — cidades (com código IBGE), clientes, produtos, representantes, departamentos, funcionários, grupos
+- **Analíticas (`dw_*`)** — fato de vendas + snapshots mensais de carteira + crédito + estoque + metas
+- **Infraestrutura (`ai_*`)** — `ai_chats` (sessões), `ai_conversas` (auditoria pergunta/resposta/SQL), `ai_sessao_chat` (checkpoints LangGraph), `ai_controle_metricas` (dicionário de métricas)
 
 ---
 
 ## Funcionalidades
 
 - **Linguagem natural em português** — sem necessidade de SQL
-- **Multi-ferramenta** — o agente escolhe autonomamente entre banco, Cube.js e RAG
-- **Row-Level Security (RLS)** — representantes veem apenas seus próprios dados, aplicado no código (não depende do LLM obedecer)
-- **Recuperação de sessão** — histórico persiste via checkpointer no banco
-- **Streaming SSE** — respostas em tempo real para o frontend
-- **Auditoria completa** — todo par pergunta/resposta + SQL executado é gravado
-- **Proteção contra SQL injection** — blocklist de padrões perigosos + apenas SELECT
-- **RAG com regras de negócio** — ChromaDB fornece contexto de domínio ao agente
-- **Cache de contexto** — evita queries repetidas ao banco a cada re-entrada do agente
+- **Multi-ferramenta** — o agente escolhe autonomamente entre buscas de cadastro, Cube.js e SQL direto
+- **Row-Level Security em código (fail closed)** — filtros de representante/departamento injetados pelo `secure_tool_node` antes de qualquer execução; se o filtro falhar, a consulta é bloqueada. Não depende do LLM obedecer
+- **LLM configurável** — OpenAI GPT-5.1 ou Claude Sonnet 5, trocável por variável de ambiente
+- **Recuperação de sessão** — histórico persiste via checkpointer no Postgres
+- **Streaming SSE** — respostas em tempo real para frontends via FastAPI
+- **Auditoria completa** — pares pergunta/resposta + SQL executado gravados no banco
+- **Proteção de SQL** — apenas SELECT + blocklist de padrões perigosos do Postgres (`pg_sleep`, `pg_catalog`, `information_schema`, DML/DDL...)
+- **Observabilidade** — tracing completo no LangSmith e visualização do grafo no Studio
+- **Cache de contexto** — data do banco e allowlist de métricas cacheadas entre re-entradas do agente
 
 ---
 
@@ -122,14 +151,13 @@ Os 5 com maior histórico de compra são: ...
 
 | Camada | Tecnologia |
 |---|---|
-| LLM | OpenAI GPT-5.4-mini via LangChain |
+| LLM | OpenAI GPT-5.1 **ou** Anthropic Claude Sonnet 5 (via LangChain, configurável) |
 | Orquestração | LangGraph (agentic workflow com state machine) |
-| Backend API | FastAPI + Uvicorn (SSE streaming) |
-| Interface | Streamlit |
-| Banco de dados | Relacional (via `oracledb` connection pool) |
+| Banco de dados | PostgreSQL 17 no Supabase (`psycopg` + connection pool) |
 | Camada semântica | Cube.js (Docker) |
-| Vetores (RAG) | ChromaDB + OpenAI text-embedding-3-small |
-| Monitoramento | LangSmith (tracing opcional) |
+| Backend API | FastAPI + Uvicorn (SSE streaming) |
+| Interface | Streamlit (com login de perfis) |
+| Observabilidade | LangSmith (tracing) + LangSmith Studio (`langgraph dev`) |
 
 ---
 
@@ -137,139 +165,81 @@ Os 5 com maior histórico de compra são: ...
 
 ### Pré-requisitos
 
-- Python 3.11+
-- Banco de dados relacional acessível
-- Cube.js rodando (ver `cube_project/`)
-- Chave de API OpenAI
+- Python 3.12+ · Docker Desktop · conta gratuita no [Supabase](https://supabase.com)
+- Chave de API da OpenAI **ou** da Anthropic
+- CSVs do Olist ([Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)) em `data/olist/`, planilha PMC da [CMED](https://www.gov.br/anvisa/pt-br/assuntos/medicamentos/cmed/precos) em `data/cmed/` e municípios do IBGE (`https://servicodados.ibge.gov.br/api/v1/localidades/municipios`) em `data/ibge/municipios.json`
 
-### 1. Clonar e instalar dependências
+### 1. Clonar e instalar
 
 ```bash
 git clone https://github.com/RaulRMO10/BI_COPILOT.git
 cd BI_COPILOT
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# ou: source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate        # Windows | source .venv/bin/activate no Linux/macOS
 pip install -r requirements.txt
 ```
 
-### 2. Configurar variáveis de ambiente
+### 2. Configurar o `.env`
 
 ```bash
 cp .env.example .env
-# Edite o .env com suas credenciais
 ```
 
-Variáveis necessárias (ver [.env.example](.env.example)):
+Principais variáveis (ver [.env.example](.env.example)):
 
 ```
-DB_USER=          # usuário do banco
-DB_PASSWORD=      # senha do banco
-DB_DSN=           # host:porta/service_name
-OPENAI_API_KEY=   # chave OpenAI
-CUBEJS_API_SECRET=# secret compartilhada com Cube.js
-CUBE_API_BASE_URL=# URL do Cube.js (ex: http://localhost:4000)
-IA_FASTAPI_SECRET_TOKEN= # token de autenticação da API
+DATABASE_URL=      # URI do session pooler do Supabase (porta 5432, sslmode=require)
+LLM_PROVIDER=      # openai | anthropic
+LLM_MODEL=         # ex.: gpt-5.1 | claude-sonnet-5
+OPENAI_API_KEY=    # e/ou ANTHROPIC_API_KEY, conforme o provider
+CUBEJS_API_SECRET= # mesma secret do cube_project/.env
+LANGSMITH_API_KEY= # opcional — tracing
 ```
 
-### 3. Criar tabelas no banco
+### 3. Construir o banco demo (uma vez)
 
-> **Nota:** O sistema usa dois conjuntos de tabelas:
-> - **Tabelas de infraestrutura** (`AI_*`) — criadas pelos scripts abaixo, para persistência do agente.
-> - **Tabelas de domínio** (`TB_*`, `DW_*`) — representam os dados do seu negócio. Adapte os nomes conforme seu modelo de dados.
-
-Execute no banco (como o usuário configurado no `DB_USER`):
-
-```sql
--- Sessões de chat
-CREATE TABLE AI_CHATS (
-    SESSION_ID  VARCHAR2(100) PRIMARY KEY,
-    FUNCIONARIO VARCHAR2(100),
-    TITULO      VARCHAR2(300),
-    CREATED_AT  TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP
-);
-
--- Auditoria de conversas
-CREATE TABLE AI_CONVERSAS (
-    ID           NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    SESSION_ID   VARCHAR2(100),
-    FUNCIONARIO  VARCHAR2(100),
-    PERGUNTA     CLOB,
-    RESPOSTA     CLOB,
-    SQL_EXECUTADO CLOB,
-    CREATED_AT   TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP
-);
-
--- Checkpoints LangGraph
-CREATE TABLE AI_SESSAO_CHAT (
-    SESSION_ID      VARCHAR2(100),
-    CHECKPOINT_ID   VARCHAR2(100),
-    CHECKPOINT_DATA CLOB,
-    METADATA        CLOB,
-    CREATED_AT      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP,
-    PRIMARY KEY (SESSION_ID, CHECKPOINT_ID)
-);
-
--- Dicionário de métricas
-CREATE TABLE AI_CONTROLE_METRICAS (
-    NOME_METRICA VARCHAR2(200) PRIMARY KEY,
-    TIPO         VARCHAR2(20),
-    CUBE_FONTE   VARCHAR2(100),
-    STATUS       VARCHAR2(10) DEFAULT 'INATIVA'
-);
-
--- Regras de negócio para RAG
-CREATE TABLE AI_REGRAS_NEGOCIO (
-    ID            NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    CONTEXTO      VARCHAR2(200),
-    REGRA         CLOB,
-    TABELA_ALVO   VARCHAR2(100),
-    PALAVRAS_CHAVE VARCHAR2(500),
-    STATUS        VARCHAR2(10) DEFAULT 'ATIVA'
-);
+```bash
+python -m seed.load_olist        # DDL + staging (Olist + CMED + IBGE)
+python -m seed.build_dominio     # cidades, clientes, produtos, reps...
+python -m seed.build_vendas      # fato de vendas re-datado + recorrência
+python -m seed.build_snapshots   # carteiras mensais com ranking ABC
+python -m seed.build_sinteticos  # metas, crédito, estoque
+python -m seed.validate          # checks de sanidade
+python sync_cube_to_db.py        # dicionário de métricas (ai_controle_metricas)
 ```
 
-### 4. Iniciar o Cube.js
+### 4. Subir o Cube.js
 
 ```bash
 cd cube_project
-cp .env.example .env
-# Edite o .env com as credenciais do banco
-docker-compose up -d
+cp .env.example .env             # aponte para o mesmo Supabase (CUBEJS_DB_SSL=true)
+docker compose up -d
 ```
 
-### 5. Sincronizar metadados
+### 5. Abrir a interface
 
 ```bash
-# Sincroniza os cubos do Cube.js para o banco
-python sync_cube_to_db.py
-
-# Vetoriza regras de negócio para o ChromaDB
-python sync_regras_to_chroma.py
+streamlit run app.py             # http://localhost:8501 — login: joao/brenda/hellena, senha demo123
 ```
 
-### 6. Iniciar os servidores
+Opcionais:
 
 ```bash
-# Terminal 1 — FastAPI (modo API REST + streaming)
-uvicorn fastapi_server:app --host 127.0.0.1 --port 8501
-
-# Terminal 2 — Streamlit (interface de demonstração direta)
-streamlit run app.py
+uvicorn fastapi_server:app --host 127.0.0.1 --port 8000   # API REST p/ frontends
+langgraph dev                                              # grafo visual no LangSmith Studio
 ```
 
 ---
 
 ## Segurança implementada
 
-- **Autenticação Bearer Token** em todos os endpoints da API
-- **Row-Level Security forçada em código** — filtros de representante injetados pelo LangGraph antes de qualquer tool call, independente do que o LLM decidir
-- **SQL injection blocklist** — padrões perigosos (`DBMS_*`, `EXECUTE IMMEDIATE`, DDL, `SYS_CONTEXT`, etc.) bloqueados antes de qualquer execução
-- **Somente SELECT** na ferramenta de SQL livre
+- **RLS forçada em código, fail closed** — o `secure_tool_node` injeta o filtro do representante/departamento em toda consulta de consultor; em erro de validação, a consulta é bloqueada (nunca "passa sem filtro")
+- **Dimensões sensíveis bloqueadas** — consultores não conseguem listar outros representantes/vendedores, mesmo pedindo explicitamente
+- **Somente SELECT + blocklist Postgres** na ferramenta de SQL livre (`pg_sleep`, `pg_read_file`, `information_schema`, DML/DDL, `dblink`...)
+- **Autenticação Bearer Token** nos endpoints da API + **CORS restrito** + **headers de segurança HTTP**
 - **JWT de curta duração** (1h) gerado a cada request para o Cube.js
-- **CORS restrito** a origens configuradas
-- **Headers de segurança HTTP** (`X-Frame-Options`, `X-Content-Type-Options`, etc.)
-- **Auditoria de queries** — todos os SQLs executados ficam gravados
+- **Auditoria** — SQLs executados e pares pergunta/resposta gravados no banco
+- **Teste de drift** — verificação automatizada de que os members citados nos mapas de segurança existem nos YAMLs do Cube
 
 ---
 
@@ -277,28 +247,32 @@ streamlit run app.py
 
 ```
 bi-copilot/
-├── app.py                    # Interface Streamlit
+├── app.py                    # Interface Streamlit (login + chat + bastidores)
 ├── fastapi_server.py         # API REST (bridge frontend ↔ LangGraph)
-├── langgraph_app.py          # Orquestrador e system prompt do agente
-├── tools.py                  # Ferramentas de banco (search + SQL livre)
+├── langgraph_app.py          # Orquestrador, system prompt e RLS do agente
+├── tools.py                  # Ferramentas de banco (search fuzzy + SQL livre)
 ├── cube_tools.py             # Ferramenta Cube.js
-├── db_checkpointer.py        # Persistência de estado LangGraph
-├── sync_cube_to_db.py        # Pipeline: YAML Cube → banco (metadados)
-├── sync_regras_to_chroma.py  # Pipeline: banco → ChromaDB (RAG)
+├── db_checkpointer.py        # Persistência de estado LangGraph (Postgres)
+├── sync_cube_to_db.py        # Pipeline: YAML Cube → dicionário de métricas
+├── langgraph.json            # Registro do grafo p/ LangSmith Studio
+├── seed/                     # Pipeline do banco demo (DDL + cargas + validação)
+├── data/                     # CSVs de origem (gitignorado)
 ├── requirements.txt
-├── .env.example              # Template de variáveis de ambiente
-├── .gitignore
+├── .env.example
 └── cube_project/
     ├── docker-compose.yml
     ├── .env.example
-    └── model/
-        ├── dw_vendas.yaml
-        ├── dw_ranking_clientes.yaml
-        ├── dw_ranking_municipios.yaml
-        ├── dw_analise_credito.yaml
-        ├── premiacoes_metas.yaml
-        └── dw_estoque_produto_pai.yaml
+    └── model/                # 6 cubos YAML da camada semântica
 ```
+
+---
+
+## Roadmap
+
+- **RAG de regras de negócio** — vetorizar regras comerciais (ChromaDB) e plugar um nó de contexto no grafo (o pipeline `sync_regras_to_chroma.py` existe como base experimental, ainda não conectado)
+- Golden questions automatizadas por perfil (pytest) + teste de drift no CI
+- Prompt caching explícito para reduzir custo por pergunta
+- Deploy do demo (Streamlit Community Cloud + Cube Cloud)
 
 ---
 
@@ -310,4 +284,4 @@ bi-copilot/
 
 ## Licença
 
-MIT
+MIT — o código. Os dados de demonstração seguem as licenças das fontes: Olist ([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)), CMED/ANVISA e IBGE (dados públicos).
