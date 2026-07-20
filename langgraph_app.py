@@ -44,6 +44,7 @@ _ctx_lock: threading.Lock = threading.Lock()
 _ctx_cache: dict = {
     "sysdate":  {"value": None, "ts": 0.0, "ttl": 60},
     "metricas": {"value": None, "ts": 0.0, "ttl": 300},
+    "regras":   {"value": None, "ts": 0.0, "ttl": 300},
 }
 
 def _ctx_get(key: str, fetch_fn):
@@ -59,9 +60,39 @@ def _ctx_get(key: str, fetch_fn):
         _ctx_cache[key]["ts"] = time.time()
     return value
 
+# ---------------------------------------------------------------------------
+# RAG — regras de negócio INTEIRAS no contexto do agente.
+# Fonte única: regras/politica_comercial.md (cada seção "## " = uma regra completa).
+# Sem busca vetorial: TODAS as regras entram no prompt, sempre — nada de escolher
+# a "mais próxima" e arriscar deixar uma política de fora. Fórmulas/cálculos NÃO
+# ficam aqui: vivem na camada semântica (Cube.js/SQL).
+# Fail-open: arquivo ausente = sem regras (segurança de acesso é outro mecanismo).
+# ---------------------------------------------------------------------------
+_REGRAS_MD = os.path.join(os.path.dirname(__file__), "regras", "politica_comercial.md")
+
+
+def _carregar_regras_negocio() -> str:
+    """Lê o caderno de regras (cacheado 300s via _ctx_get)."""
+    try:
+        import re as _re
+        texto = open(_REGRAS_MD, encoding="utf-8").read()
+        blocos = _re.split(r"^## ", texto, flags=_re.MULTILINE)[1:]
+        regras = []
+        for bloco in blocos:
+            linhas = bloco.strip().splitlines()
+            titulo, corpo = linhas[0].strip(), "\n".join(linhas[1:]).strip()
+            if corpo:
+                regras.append(f"[{titulo}]\n{corpo}")
+        return "\n\n".join(regras)
+    except Exception as e:
+        print(f"[RAG] caderno de regras indisponível ({e}) — seguindo sem regras")
+        return ""
+
+
 # --- 1. Definir o Estado do Grafo ---
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    rag_context: str
 
 # --- 2. Registrar as Tools ---
 tools = [
@@ -1738,9 +1769,28 @@ Por segurança, TODAS as respostas estão bloqueadas até que o perfil seja vali
 Responda apenas: "Seu perfil de acesso não pôde ser validado. Contate o administrador do sistema."
 """
 
-    # Injeta o bloco de segurança no final do system prompt (maior prioridade = última instrução)
+    # ── RAG: TODAS as regras de negócio inteiras entram no contexto (cache 300s) ──
+    regras_rag = _ctx_get("regras", _carregar_regras_negocio)
+    bloco_regras = ""
+    if regras_rag:
+        bloco_regras = f"""
+
+════════════════════════════════════════════════
+§13 — REGRAS DE NEGÓCIO VIGENTES (política comercial)
+════════════════════════════════════════════════
+Abaixo está a política comercial completa da empresa. Você DEVE respeitá-la e
+citar a regra aplicável ao usuário sempre que ela limitar ou condicionar a
+resposta (alçadas de desconto, bloqueios de crédito, exigências regulatórias,
+prazos, canal público etc.). Estas regras complementam — nunca substituem —
+as regras de segurança de acesso.
+
+{regras_rag}
+"""
+
+    # Injeta regras de negócio + bloco de segurança no final do system prompt
+    # (segurança por último = maior prioridade)
     system_prompt_final = SystemMessage(
-        content=system_prompt.content + bloco_seguranca
+        content=system_prompt.content + bloco_regras + bloco_seguranca
     )
 
     print(f"\n[Executor] {len(messages)} mensagens no histórico.")
@@ -1750,7 +1800,7 @@ Responda apenas: "Seu perfil de acesso não pôde ser validado. Contate o admini
     print(f"[Segurança] tipo={tipo} | representante={representante} | can_see_all={can_see_all}")
 
     response = llm_with_tools.invoke([system_prompt_final] + messages)
-    return {"messages": [response]}
+    return {"messages": [response], "rag_context": regras_rag}
 
 
 # --- 4. Roteador e Grafo ---

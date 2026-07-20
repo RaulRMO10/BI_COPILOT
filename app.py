@@ -201,9 +201,19 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                             except Exception:
                                 pass
 
-                    if cube_payload_str or db_sqls_executed:
-                        with st.expander("🛠️ Bastidores (JSON Cube / SQL / Fluxo do Agente)"):
-                            tab1, tab2, tab3 = st.tabs(["JSON Cube", "SQL Executado", "Fluxo do Agente"])
+                    rag_context = resultado.get("rag_context", "")
+                    if cube_payload_str or db_sqls_executed or rag_context:
+                        with st.expander("🛠️ Bastidores (JSON Cube / SQL / Regras / Fluxo)"):
+                            tab1, tab2, tab4, tab3 = st.tabs(
+                                ["JSON Cube", "SQL Executado", "Regras de Negócio (RAG)", "Fluxo do Agente"])
+
+                            with tab4:
+                                st.markdown("**Política comercial injetada no contexto do agente** "
+                                            "(regras inteiras, sempre presentes — fonte: `regras/politica_comercial.md`):")
+                                if rag_context:
+                                    st.markdown(rag_context)
+                                else:
+                                    st.info("Caderno de regras não carregado nesta interação.")
 
                             with tab1:
                                 if cube_payload_str:

@@ -103,13 +103,14 @@ Senha única: `demo123`
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `app.py` | Interface Streamlit: login de perfis, chat e bastidores (JSON Cube/SQL/fluxo) |
+| `app.py` | Interface Streamlit: login de perfis, chat e bastidores (JSON Cube/SQL/regras/fluxo) |
 | `fastapi_server.py` | API REST (streaming SSE + gestão de chats) para integração com frontends |
 | `langgraph_app.py` | Orquestrador LangGraph: state machine, system prompt, RLS fail-closed |
 | `tools.py` | Ferramentas de banco (psycopg + pool): busca fuzzy de reps/clientes/produtos, SQL livre com blocklist |
 | `cube_tools.py` | Ferramenta Cube.js: executa queries JSON na camada semântica (JWT de curta duração) |
 | `db_checkpointer.py` | Persiste checkpoints do LangGraph no Postgres (upsert `ON CONFLICT`) |
 | `sync_cube_to_db.py` | Sincroniza metadados dos cubos para o dicionário de métricas |
+| `regras/politica_comercial.md` | Caderno de regras de negócio (RAG): política comercial completa, injetada inteira no contexto do agente |
 | `seed/` | Pipeline do banco demo: DDL + carga Olist/CMED/IBGE + camadas sintéticas + validação |
 | `langgraph.json` | Registro do grafo para o LangSmith Studio (`langgraph dev`) |
 
@@ -137,6 +138,7 @@ Senha única: `demo123`
 - **Linguagem natural em português** — sem necessidade de SQL
 - **Multi-ferramenta** — o agente escolhe autonomamente entre buscas de cadastro, Cube.js e SQL direto
 - **Row-Level Security em código (fail closed)** — filtros de representante/departamento injetados pelo `secure_tool_node` antes de qualquer execução; se o filtro falhar, a consulta é bloqueada. Não depende do LLM obedecer
+- **Regras de negócio em contexto (RAG)** — a política comercial (alçadas de desconto, bloqueio por inadimplência, teto PMVG no canal público, RDC 471/Portaria 344, cadeia fria...) entra **inteira** no contexto do agente, que cita a regra aplicável ao limitar uma resposta. Fórmulas ficam no SQL da camada semântica; regras descritivas ficam no caderno versionado `regras/`
 - **LLM configurável** — OpenAI GPT-5.1 ou Claude Sonnet 5, trocável por variável de ambiente
 - **Recuperação de sessão** — histórico persiste via checkpointer no Postgres
 - **Streaming SSE** — respostas em tempo real para frontends via FastAPI
@@ -255,6 +257,7 @@ bi-copilot/
 ├── db_checkpointer.py        # Persistência de estado LangGraph (Postgres)
 ├── sync_cube_to_db.py        # Pipeline: YAML Cube → dicionário de métricas
 ├── langgraph.json            # Registro do grafo p/ LangSmith Studio
+├── regras/                   # Caderno de regras de negócio (RAG em contexto)
 ├── seed/                     # Pipeline do banco demo (DDL + cargas + validação)
 ├── data/                     # CSVs de origem (gitignorado)
 ├── requirements.txt
@@ -269,7 +272,6 @@ bi-copilot/
 
 ## Roadmap
 
-- **RAG de regras de negócio** — vetorizar regras comerciais (ChromaDB) e plugar um nó de contexto no grafo (o pipeline `sync_regras_to_chroma.py` existe como base experimental, ainda não conectado)
 - Golden questions automatizadas por perfil (pytest) + teste de drift no CI
 - Prompt caching explícito para reduzir custo por pergunta
 - Deploy do demo (Streamlit Community Cloud + Cube Cloud)
