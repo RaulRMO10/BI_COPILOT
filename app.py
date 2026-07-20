@@ -9,20 +9,27 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from langchain_core.messages import HumanMessage
 
-# Configuração da Página
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuração
+# ─────────────────────────────────────────────────────────────────────────────
+DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
+LIMITE_PERGUNTAS = int(os.getenv("DEMO_LIMITE_PERGUNTAS", "10"))     # por pessoa
+LIMITE_GLOBAL_DIA = int(os.getenv("DEMO_LIMITE_GLOBAL_DIA", "300"))  # disjuntor global
+LINKEDIN_URL = os.getenv("LINKEDIN_URL", "https://www.linkedin.com/in/raulrmo/")
+GITHUB_URL = os.getenv("GITHUB_URL", "https://github.com/RaulRMO10/BI_COPILOT")
+
 st.set_page_config(
-    page_title="BI Copilot - Assistente Comercial",
+    page_title="BI Copilot — Assistente Comercial",
     page_icon="🧭",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Usuários de demonstração (dados reais do seed — senha única de demo)
-# O user_context alimenta a RLS do agente: diretor vê tudo; consultores são
-# filtrados no código (secure_tool_node) para a própria carteira/departamento.
+# Perfis (personas) — dados reais do seed. No modo demo o usuário loga com Google
+# (identidade/crédito) e escolhe qual perfil explorar (mostra a RLS em ação).
 # ─────────────────────────────────────────────────────────────────────────────
-SENHA_DEMO = "demo123"
+SENHA_DEMO = "demo123"  # usado apenas no login LOCAL (DEMO_MODE=false)
 USUARIOS_DEMO = {
     "joao": {
         "icone": "👔",
@@ -53,7 +60,6 @@ USUARIOS_DEMO = {
     },
 }
 
-# Estilos CSS Injetados
 st.markdown("""
 <style>
     .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
@@ -63,41 +69,237 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TELA DE LOGIN
-# ─────────────────────────────────────────────────────────────────────────────
-if "usuario" not in st.session_state:
-    col_esq, col_login, col_dir = st.columns([1, 1.2, 1])
+# ═════════════════════════════════════════════════════════════════════════════
+# Helpers do MODO DEMO (crédito, feedback, identidade, notificação)
+# ═════════════════════════════════════════════════════════════════════════════
+def _db():
+    from tools import get_connection
+    return get_connection()
+
+
+def _auth_google_configurado() -> bool:
+    try:
+        return "auth" in st.secrets
+    except Exception:
+        return False
+
+
+def _notificar(texto: str) -> None:
+    """Envia um aviso ao Discord (se DISCORD_WEBHOOK_URL estiver setado). Não bloqueia."""
+    url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    if not url:
+        return
+    try:
+        import requests
+        requests.post(url, json={"content": texto[:1900]}, timeout=4)
+    except Exception:
+        pass
+
+
+def _demo_registrar_usuario(email: str, nome: str) -> bool:
+    """Upsert do visitante. Retorna True se é a primeira vez que ele acessa."""
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO demo_usuarios (email, nome, limite) VALUES (%s, %s, %s)
+        ON CONFLICT (email) DO UPDATE SET ultimo_acesso = now() AT TIME ZONE 'America/Sao_Paulo'
+        RETURNING (xmax = 0) AS novo
+    """, (email, nome, LIMITE_PERGUNTAS))
+    novo = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return novo
+
+
+def _demo_status(email: str):
+    """Retorna (limite_do_usuario, perguntas_usadas, total_global_hoje)."""
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("SELECT limite FROM demo_usuarios WHERE email = %s", (email,))
+    row = cur.fetchone()
+    limite = row[0] if row else LIMITE_PERGUNTAS
+    cur.execute("SELECT count(*) FROM demo_uso WHERE email = %s", (email,))
+    usadas = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM demo_uso WHERE criado_em::date = current_date")
+    global_dia = cur.fetchone()[0]
+    cur.close(); conn.close()
+    return limite, usadas, global_dia
+
+
+def _demo_registrar_pergunta(email: str, persona: str, pergunta: str) -> None:
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO demo_uso (email, persona, pergunta) VALUES (%s, %s, %s)",
+                (email, persona, pergunta[:500]))
+    conn.commit(); cur.close(); conn.close()
+
+
+def _demo_feedback(email: str, nome: str, rating: str, comentario: str = "") -> None:
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO demo_feedback (email, nome, rating, comentario) VALUES (%s, %s, %s, %s)",
+                (email, nome, rating, comentario[:1000]))
+    conn.commit(); cur.close(); conn.close()
+    emoji = "👍" if rating == "positivo" else "👎"
+    _notificar(f"{emoji} Feedback de {nome} ({email})" + (f": {comentario}" if comentario else ""))
+
+
+def _obter_identidade():
+    """Retorna (email, nome) do visitante. Interrompe a execução se não logado.
+    Usa login Google nativo quando [auth] está configurado; senão, um formulário
+    simples de e-mail (para testar localmente sem OAuth)."""
+    if _auth_google_configurado():
+        if not st.user.is_logged_in:
+            _tela_boas_vindas(google=True)
+            st.stop()
+        email = st.user.email
+        nome = getattr(st.user, "name", None) or email.split("@")[0]
+        return email, nome
+
+    # Fallback local (sem OAuth): identidade por formulário, guardada na sessão
+    if "demo_ident" not in st.session_state:
+        _tela_boas_vindas(google=False)
+        st.stop()
+    ident = st.session_state.demo_ident
+    return ident["email"], ident["nome"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Telas
+# ═════════════════════════════════════════════════════════════════════════════
+def _tela_boas_vindas(google: bool):
+    _, meio, _ = st.columns([1, 1.4, 1])
+    with meio:
+        st.title("🧭 BI Copilot")
+        st.markdown("### Um copiloto de BI que conversa com seus dados")
+        st.markdown(
+            "Faça perguntas em português sobre uma **distribuidora farmacêutica fictícia** "
+            "e veja o agente escolher a ferramenta, montar a consulta e responder — "
+            "respeitando o **perfil de acesso** de quem pergunta.\n\n"
+            f"Você tem **{LIMITE_PERGUNTAS} perguntas de cortesia**. Dados 100% sintéticos "
+            "(Olist + CMED + IBGE), nenhum dado real de empresa."
+        )
+        st.divider()
+        if google:
+            st.markdown("Entre para começar — usamos seu login apenas para organizar as perguntas de cortesia.")
+            if st.button("🔓  Entrar com Google", use_container_width=True, type="primary"):
+                st.login()
+        else:
+            st.info("Modo de teste local (sem OAuth). Informe um nome e e-mail para simular a identidade.")
+            with st.form("ident_local"):
+                nome = st.text_input("Seu nome").strip()
+                email = st.text_input("Seu e-mail").strip().lower()
+                if st.form_submit_button("Começar", use_container_width=True, type="primary"):
+                    if nome and "@" in email:
+                        st.session_state.demo_ident = {"nome": nome, "email": email}
+                        st.rerun()
+                    else:
+                        st.error("Informe um nome e um e-mail válido.")
+
+
+def _tela_escolha_persona(email: str, nome: str):
+    st.title(f"🧭 Olá, {nome.split()[0]}!")
+    st.markdown("Escolha **de qual cadeira** você quer explorar o BI. O mesmo assistente "
+                "responde de formas diferentes conforme o acesso do perfil — é a segurança em ação.")
+    st.write("")
+    cols = st.columns(3)
+    exemplos = {
+        "joao": "Ex.: *Qual o quadrante deste mês?* · *Quantos inadimplentes temos?*",
+        "brenda": "Ex.: *Meus 5 melhores clientes?* · *Posso dar 25% de desconto?*",
+        "hellena": "Ex.: *Quais municípios da minha carteira mais compraram?*",
+    }
+    for col, (chave, dados) in zip(cols, USUARIOS_DEMO.items()):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"### {dados['icone']} {dados['user_context']['nome']}")
+                st.caption(dados["cargo"])
+                st.markdown(exemplos[chave])
+                if st.button("Explorar como este perfil", key=f"persona_{chave}", use_container_width=True):
+                    st.session_state.usuario = dados
+                    st.session_state.persona_key = chave
+                    st.session_state.messages = []
+                    st.session_state.session_id = f"bi_ia_{dados['user_context']['funcionario']}_{uuid.uuid4().hex[:8]}"
+                    st.rerun()
+
+
+def _tela_limite_global():
+    _, meio, _ = st.columns([1, 1.4, 1])
+    with meio:
+        st.title("🧭 BI Copilot")
+        st.warning("A demonstração atingiu o limite de uso de hoje. 🙏")
+        st.markdown("Muita gente testando ao mesmo tempo! Volte amanhã para experimentar, "
+                    f"ou veja o projeto agora mesmo:\n\n- 👨‍💻 [Código no GitHub]({GITHUB_URL})\n- 💼 [LinkedIn]({LINKEDIN_URL})")
+
+
+def _tela_parede(email: str, nome: str):
+    """Mostrada quando o visitante esgota as perguntas de cortesia."""
+    st.title("🎉 Você explorou o BI Copilot!")
+    st.markdown(f"Suas **{LIMITE_PERGUNTAS} perguntas de cortesia** acabaram, {nome.split()[0]}. "
+                "Espero que tenha curtido ver um agente de BI trabalhando de verdade.")
+    st.write("")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.link_button("👨‍💻 Ver o código no GitHub", GITHUB_URL, use_container_width=True)
+    with c2:
+        st.link_button("💼 Conectar no LinkedIn", LINKEDIN_URL, use_container_width=True)
+    st.divider()
+    st.markdown("#### O que você achou? Sua avaliação me ajuda muito 🙏")
+    if st.session_state.get("feedback_enviado"):
+        st.success("Obrigado pela avaliação! 💚")
+        return
+    with st.form("feedback_final"):
+        rating = st.radio("De modo geral, o assistente te ajudaria no dia a dia?",
+                          ["👍 Sim, achei útil", "👎 Ainda não"], horizontal=True)
+        comentario = st.text_area("Quer deixar um comentário? (opcional)")
+        if st.form_submit_button("Enviar avaliação", type="primary"):
+            _demo_feedback(email, nome, "positivo" if rating.startswith("👍") else "negativo", comentario)
+            st.session_state.feedback_enviado = True
+            st.rerun()
+
+
+def _tela_login_local():
+    """Login por senha para desenvolvimento (DEMO_MODE=false)."""
+    _, col_login, _ = st.columns([1, 1.2, 1])
     with col_login:
         st.title("🧭 BI Copilot")
-        st.caption("Assistente Comercial Inteligente — ambiente de demonstração")
-
+        st.caption("Assistente Comercial Inteligente — ambiente de desenvolvimento")
         with st.form("login"):
             login = st.text_input("Usuário").strip().lower()
             senha = st.text_input("Senha", type="password")
             entrar = st.form_submit_button("Entrar", use_container_width=True)
-
         if entrar:
             if login in USUARIOS_DEMO and senha == SENHA_DEMO:
                 st.session_state.usuario = USUARIOS_DEMO[login]
                 st.session_state.messages = []
-                st.session_state.session_id = (
-                    f"bi_ia_{USUARIOS_DEMO[login]['user_context']['funcionario']}_{uuid.uuid4().hex[:8]}"
-                )
+                st.session_state.session_id = f"bi_ia_{USUARIOS_DEMO[login]['user_context']['funcionario']}_{uuid.uuid4().hex[:8]}"
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos.")
-
         with st.expander("🔑 Credenciais de demonstração"):
             st.markdown(f"Senha para todos: `{SENHA_DEMO}`")
             for u, dados in USUARIOS_DEMO.items():
                 st.markdown(f"- `{u}` — {dados['icone']} **{dados['user_context']['nome']}** · {dados['cargo']}")
-    st.stop()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# APP LOGADO
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUXO PRINCIPAL
+# ═════════════════════════════════════════════════════════════════════════════
+demo_email = demo_nome = None
+if DEMO_MODE:
+    demo_email, demo_nome = _obter_identidade()
+    if _demo_registrar_usuario(demo_email, demo_nome):
+        _notificar(f"🎉 Novo visitante no BI Copilot: {demo_nome} ({demo_email})")
+    limite, usadas, global_dia = _demo_status(demo_email)
+    if global_dia >= LIMITE_GLOBAL_DIA:
+        _tela_limite_global()
+        st.stop()
+    if "usuario" not in st.session_state:
+        _tela_escolha_persona(demo_email, demo_nome)
+        st.stop()
+else:
+    if "usuario" not in st.session_state:
+        _tela_login_local()
+        st.stop()
+
 usuario = st.session_state.usuario
 ctx = usuario["user_context"]
 
@@ -109,7 +311,7 @@ if "graph_app" not in st.session_state:
         st.error(f"Erro ao inicializar o motor de IA: {e}")
         st.stop()
 
-# Sidebar: identidade + ações
+# ── Sidebar ──
 with st.sidebar:
     st.markdown(f"### {usuario['icone']} {ctx['nome']}")
     st.caption(usuario["cargo"])
@@ -117,21 +319,43 @@ with st.sidebar:
         st.caption(f"Representante `{ctx['representante']}` · Depto `{ctx['departamento']}`")
     else:
         st.caption("Acesso total (sem filtro de representante)")
+
+    if DEMO_MODE:
+        limite, usadas, _ = _demo_status(demo_email)
+        restantes = max(0, limite - usadas)
+        st.divider()
+        st.markdown(f"**Perguntas de cortesia:** {restantes} de {limite}")
+        st.progress(restantes / limite if limite else 0)
+        st.caption(f"Logado como {demo_nome}")
+        if st.button("🔄 Trocar de perfil", use_container_width=True):
+            for chave in ("usuario", "messages", "session_id"):
+                st.session_state.pop(chave, None)
+            st.rerun()
+    else:
+        st.divider()
+        if st.button("💬 Nova conversa", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.session_id = f"bi_ia_{ctx['funcionario']}_{uuid.uuid4().hex[:8]}"
+            st.rerun()
+        if st.button("🚪 Sair", use_container_width=True):
+            for chave in ("usuario", "messages", "session_id"):
+                st.session_state.pop(chave, None)
+            st.rerun()
+
     st.divider()
-    if st.button("💬 Nova conversa", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.session_id = f"bi_ia_{ctx['funcionario']}_{uuid.uuid4().hex[:8]}"
-        st.rerun()
-    if st.button("🚪 Sair", use_container_width=True):
-        for chave in ("usuario", "messages", "session_id"):
-            st.session_state.pop(chave, None)
-        st.rerun()
-    st.divider()
-    st.caption("Dados de demonstração: Olist (CC BY-NC-SA) + CMED/ANVISA + IBGE + camadas sintéticas. "
-               "Nenhum dado real de empresa.")
+    st.caption("Dados de demonstração: Olist (CC BY-NC-SA) + CMED/ANVISA + IBGE + camadas "
+               "sintéticas. Nenhum dado real de empresa.")
 
 st.title("🧭 Assistente de BI Inteligente")
 st.markdown("Pergunte em linguagem natural sobre vendas, carteira, metas, crédito e estoque.")
+
+# ── No modo demo, checa se o crédito acabou ANTES de deixar perguntar ──
+credito_esgotado = False
+if DEMO_MODE:
+    limite, usadas, _ = _demo_status(demo_email)
+    if usadas >= limite:
+        credito_esgotado = True
+        _tela_parede(demo_email, demo_nome)
 
 chat_container = st.container()
 
@@ -141,15 +365,20 @@ with chat_container:
             sugestao = ("*Qual foi o faturamento deste mês?* ou *Como está o quadrante de julho?*"
                         if ctx["can_see_all"]
                         else "*Como estou em relação à minha meta?* ou *Quais meus melhores clientes do mês?*")
-            st.markdown(f"Olá, **{ctx['nome'].split()[0] if ctx['nome'] else 'tudo bem'}**! "
-                        f"Sou seu assistente de BI. Experimente: {sugestao}")
+            primeiro_nome = ctx['nome'].split()[0] if ctx['nome'] else 'tudo bem'
+            st.markdown(f"Olá, **{primeiro_nome}**! Sou seu assistente de BI. Experimente: {sugestao}")
 
-    for message in st.session_state.messages:
+    for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# Caixa de Entrada do Usuário
-if user_input := st.chat_input("Pergunte aos seus dados..."):
+# ── Entrada do usuário (bloqueada se o crédito acabou) ──
+user_input = None if credito_esgotado else st.chat_input("Pergunte aos seus dados...")
+
+if user_input:
+    if DEMO_MODE:
+        _demo_registrar_pergunta(demo_email, st.session_state.get("persona_key", "?"), user_input)
+
     st.session_state.messages.append({"role": "user", "content": user_input})
     with chat_container:
         with st.chat_message("user"):
@@ -159,30 +388,26 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
         with st.chat_message("assistant"):
             with st.spinner("Analisando dados e estruturando a consulta..."):
                 try:
-                    # user_context: é isto que ativa a RLS no executor/secure_tool_node
                     config = {
                         "configurable": {
                             "thread_id": st.session_state.session_id,
                             "user_context": ctx,
                         }
                     }
-
                     resultado = st.session_state.graph_app.invoke(
                         {"messages": [HumanMessage(content=user_input)]},
-                        config=config
+                        config=config,
                     )
-
                     resposta_final = resultado["messages"][-1].content
-                    if isinstance(resposta_final, list):  # conteúdo multi-parte (ex.: Claude)
+                    if isinstance(resposta_final, list):
                         resposta_final = " ".join(
                             p.get("text", "") for p in resposta_final
                             if isinstance(p, dict) and p.get("type") == "text"
                         )
-
                     st.markdown(resposta_final)
                     st.session_state.messages.append({"role": "assistant", "content": resposta_final})
 
-                    # ── Bastidores: JSON Cube, SQL executado e fluxo do agente ──
+                    # ── Bastidores: JSON Cube, SQL, Regras (RAG), Fluxo ──
                     cube_payload_str = None
                     db_sqls_executed = []
                     for msg in resultado["messages"]:
@@ -194,10 +419,7 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                             try:
                                 res_dict = json.loads(msg.content)
                                 if isinstance(res_dict, dict) and "sql_executado_no_banco" in res_dict:
-                                    db_sqls_executed.append({
-                                        "tool": msg.name,
-                                        "sql": res_dict["sql_executado_no_banco"]
-                                    })
+                                    db_sqls_executed.append({"tool": msg.name, "sql": res_dict["sql_executado_no_banco"]})
                             except Exception:
                                 pass
 
@@ -206,15 +428,6 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                         with st.expander("🛠️ Bastidores (JSON Cube / SQL / Regras / Fluxo)"):
                             tab1, tab2, tab4, tab3 = st.tabs(
                                 ["JSON Cube", "SQL Executado", "Regras de Negócio (RAG)", "Fluxo do Agente"])
-
-                            with tab4:
-                                st.markdown("**Política comercial injetada no contexto do agente** "
-                                            "(regras inteiras, sempre presentes — fonte: `regras/politica_comercial.md`):")
-                                if rag_context:
-                                    st.markdown(rag_context)
-                                else:
-                                    st.info("Caderno de regras não carregado nesta interação.")
-
                             with tab1:
                                 if cube_payload_str:
                                     st.markdown("**Requisição Semântica gerada pelo LLM "
@@ -222,7 +435,6 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                                     st.code(cube_payload_str, language="json")
                                 else:
                                     st.info("Nenhuma consulta Cube nesta interação.")
-
                             with tab2:
                                 if db_sqls_executed:
                                     for sql_entry in db_sqls_executed:
@@ -230,7 +442,13 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                                         st.code(sql_entry['sql'], language="sql")
                                 else:
                                     st.info("Nenhuma query SQL direta neste passo.")
-
+                            with tab4:
+                                st.markdown("**Política comercial injetada no contexto do agente** "
+                                            "(regras inteiras, sempre presentes — fonte: `regras/politica_comercial.md`):")
+                                if rag_context:
+                                    st.markdown(rag_context)
+                                else:
+                                    st.info("Caderno de regras não carregado nesta interação.")
                             with tab3:
                                 st.markdown("**Rastro cognitivo do agente:**")
                                 for m in resultado["messages"]:
@@ -243,12 +461,22 @@ if user_input := st.chat_input("Pergunte aos seus dados..."):
                                                 st.caption(f"Argumentos: `{str(call['args'])[:300]}`")
                                         conteudo = m.content
                                         if isinstance(conteudo, list):
-                                            conteudo = " ".join(p.get("text", "") for p in conteudo
-                                                                if isinstance(p, dict))
+                                            conteudo = " ".join(p.get("text", "") for p in conteudo if isinstance(p, dict))
                                         if conteudo:
                                             st.write(f"🤖 **IA respondeu:** {str(conteudo)[:200]}...")
                                     elif m.type == "tool":
                                         st.write(f"⚙️ **Retorno de `{m.name}`:** {len(str(m.content))} chars lidos.")
+
+                    # ── Feedback rápido por resposta (só no modo demo) ──
+                    if DEMO_MODE:
+                        fb_key = f"fb_{len(st.session_state.messages)}"
+                        c1, c2, _ = st.columns([1, 1, 6])
+                        if c1.button("👍", key=fb_key + "_up", help="Resposta útil"):
+                            _demo_feedback(demo_email, demo_nome, "positivo", f"[resposta] {user_input}")
+                            st.toast("Obrigado pelo feedback! 💚")
+                        if c2.button("👎", key=fb_key + "_down", help="Resposta ruim"):
+                            _demo_feedback(demo_email, demo_nome, "negativo", f"[resposta] {user_input}")
+                            st.toast("Valeu! Vou melhorar. 🙏")
 
                 except Exception as e:
                     st.error(f"Infelizmente encontrei um erro crítico: {str(e)}")
