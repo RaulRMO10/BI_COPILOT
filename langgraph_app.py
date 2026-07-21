@@ -10,7 +10,6 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langchain_anthropic import ChatAnthropic
 
 from tools import (
     buscar_representante,
@@ -459,18 +458,19 @@ def secure_tool_node(state: AgentState, config: RunnableConfig):
     return result
 
 
-# LLM configurável via .env: LLM_PROVIDER=anthropic|openai e LLM_MODEL opcional.
-# Anthropic (default): Claude Sonnet 5 — sem temperature (modelos atuais rejeitam
-# parâmetros de sampling); adaptive thinking fica no default do modelo.
-# OpenAI: alternativa mais barata na variante mini (qualidade menor no prompt rígido).
-_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+# LLM configurável via .env: LLM_PROVIDER=openai|anthropic e LLM_MODEL opcional.
+# OpenAI (default): gpt-5.1 — é o provedor usado na demo.
+# Anthropic (Claude Sonnet 5): opcional — requer `pip install langchain-anthropic`
+# (import lazy abaixo para não obrigar o pacote quando se usa OpenAI).
+_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 _LLM_MODEL = os.getenv("LLM_MODEL", "").strip()
 
-if _LLM_PROVIDER == "openai":
+if _LLM_PROVIDER == "anthropic":
+    from langchain_anthropic import ChatAnthropic  # opcional — só quando escolhido
+    llm = ChatAnthropic(model=_LLM_MODEL or "claude-sonnet-5", max_tokens=16000)
+else:
     from langchain_openai import ChatOpenAI
     llm = ChatOpenAI(model=_LLM_MODEL or "gpt-5.1", temperature=0)
-else:
-    llm = ChatAnthropic(model=_LLM_MODEL or "claude-sonnet-5", max_tokens=16000)
 
 print(f"[LLM] provider={_LLM_PROVIDER} | modelo={getattr(llm, 'model', getattr(llm, 'model_name', '?'))}")
 llm_with_tools = llm.bind_tools(tools)
