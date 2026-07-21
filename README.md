@@ -149,6 +149,22 @@ Senha única: `demo123`
 
 ---
 
+## Decisões de arquitetura (o "porquê")
+
+Mais importante que as ferramentas usadas são as decisões por trás delas:
+
+- **Camada semântica (Cube.js) em vez de text-to-SQL cru.** Deixar o LLM escrever SQL livre contra o schema é frágil: ele erra join, inventa coluna, e não há garantia de que a métrica de "faturamento" é sempre a mesma. Com o Cube, as métricas (faturamento, margem, positivação, ticket médio) são **definidas uma vez** em YAML e o agente só escolhe *quais* pedir — a fórmula é sempre a mesma, versionada e testável. O agente fica mais simples e as respostas, consistentes.
+
+- **Segurança (RLS) forçada em código, não confiando no prompt.** A regra "consultor só vê a própria carteira" **não** pode depender do LLM obedecer a uma instrução — um prompt bem construído contorna qualquer instrução. Por isso o `secure_tool_node` intercepta toda chamada de ferramenta e **injeta o filtro do representante antes de executar**, com política *fail closed*: se o filtro não puder ser aplicado, a consulta é bloqueada. O prompt reforça, mas o código garante.
+
+- **Regras de negócio no contexto, fórmulas na camada semântica.** Duas naturezas diferentes: regra descritiva ("desconto acima de 20% exige diretoria") vive em texto no caderno `regras/` e entra **inteira** no contexto do agente; cálculo ("margem = 1 − vendas/tabela") vive no SQL do Cube, onde é determinístico. Tentar fazer o LLM calcular, ou vetorizar e "buscar a regra mais próxima", foi descartado — ambos introduzem erro onde não deveria haver.
+
+- **Dados reais re-datados em vez de 100% sintéticos.** Usar transações verdadeiras do Olist (com re-datação para uma janela recente) dá volumetria, sazonalidade e distribuição realistas que dados inventados não teriam — e o catálogo CMED ancora o cenário no tema farmacêutico. O sintético fica só para o que não existe em fonte pública (representantes, metas, crédito), derivado do próprio histórico para manter coerência.
+
+- **LLM plugável (OpenAI ou Anthropic).** O provedor é uma variável de ambiente, não uma dependência cravada — troca-se de GPT-5.1 para Claude Sonnet 5 sem tocar no código do agente. Facilita comparar custo/qualidade e não amarra o projeto a um fornecedor.
+
+---
+
 ## Stack Tecnológica
 
 | Camada | Tecnologia |
@@ -230,6 +246,12 @@ Opcionais:
 uvicorn fastapi_server:app --host 127.0.0.1 --port 8000   # API REST p/ frontends
 langgraph dev                                              # grafo visual no LangSmith Studio
 ```
+
+### Demo pública (opcional)
+
+Há um **modo demo** com login Google, limite de perguntas por pessoa e feedback,
+pensado para hospedar no Hugging Face Spaces (`DEMO_MODE=true`). Passo a passo em
+[DEPLOY.md](DEPLOY.md).
 
 ---
 

@@ -1,0 +1,12 @@
+.venv/
+data/
+chroma_data/
+.git/
+.langgraph_api/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+cube_project/node_modules/
+cube_project/.cubestore/
