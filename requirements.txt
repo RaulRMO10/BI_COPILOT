@@ -141,3 +141,4 @@ websockets==16.0
 xxhash==3.6.0
 zipp==3.23.0
 zstandard==0.25.0
+Authlib==1.7.2
