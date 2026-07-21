@@ -4,6 +4,20 @@ import uuid
 import sys
 import os
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ponte Streamlit Cloud → variáveis de ambiente.
+# No Streamlit Community Cloud os segredos vivem em st.secrets e NÃO viram env
+# vars sozinhos; os módulos do agente (tools/langgraph_app/cube_tools) leem via
+# os.getenv. Copiamos os valores string para o ambiente ANTES de qualquer import
+# desses módulos. A seção [auth] (tabela) é ignorada — st.login a lê direto.
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str):
+            os.environ.setdefault(_k, _v)
+except Exception:
+    pass
+
 # Ajuste do path para importar os módulos locais do projeto
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
