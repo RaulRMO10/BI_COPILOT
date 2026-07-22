@@ -74,6 +74,49 @@ USUARIOS_DEMO = {
     },
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Perguntas-exemplo por perfil (todas testadas contra o agente).
+# (texto, é_segurança) — as de segurança demonstram a RLS bloqueando o acesso.
+# ─────────────────────────────────────────────────────────────────────────────
+EXEMPLOS = {
+    "joao": [
+        ("Qual foi o faturamento no mês passado?", False),
+        ("Me mostra o quadrante de vendas do mês passado", False),
+        ("Quantos clientes inadimplentes temos e qual o valor total em atraso?", False),
+        ("Compare o faturamento total da empresa no mês passado com o mês anterior", False),
+        ("Qual foi a positivação de clientes no mês passado?", False),
+        ("Qual foi o ticket médio no mês passado?", False),
+        ("Qual foi a margem de desconto média no mês passado?", False),
+        ("Quais foram os 10 produtos mais vendidos no mês passado?", False),
+        ("Qual o total de limite de crédito concedido e quanto está disponível?", False),
+        ("Quantas cidades foram positivadas no mês passado?", False),
+    ],
+    "brenda": [
+        ("Quais são meus 5 melhores clientes do mês passado?", False),
+        ("Como fiquei em relação à minha meta no mês passado?", False),
+        ("Quais clientes da minha carteira estão em risco de perda no mês passado?", False),
+        ("Qual foi meu faturamento no mês passado?", False),
+        ("Quais dos meus clientes estão inadimplentes?", False),
+        ("Quantos clientes eu positivei no mês passado?", False),
+        ("Qual foi meu ticket médio no mês passado?", False),
+        ("Me mostra meu quadrante do mês passado", False),
+        ("Mostre os clientes da Hellena", True),
+        ("Qual o faturamento dos outros representantes?", True),
+    ],
+    "hellena": [
+        ("Quais municípios da minha carteira mais compraram no mês passado?", False),
+        ("Qual foi meu faturamento no mês passado?", False),
+        ("Quais municípios da minha carteira estão em risco de perda no mês passado?", False),
+        ("Como fiquei em relação à minha meta no mês passado?", False),
+        ("Qual foi minha positivação no mês passado?", False),
+        ("Qual foi meu ticket médio no mês passado?", False),
+        ("Quantos municípios ativos tenho na carteira?", False),
+        ("Me mostra meu quadrante do mês passado", False),
+        ("Quais dos meus clientes estão inadimplentes?", True),
+        ("Mostre a carteira da Brenda", True),
+    ],
+}
+
 st.markdown("""
 <style>
     .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
@@ -298,6 +341,7 @@ def _tela_login_local():
         if entrar:
             if login in USUARIOS_DEMO and senha == SENHA_DEMO:
                 st.session_state.usuario = USUARIOS_DEMO[login]
+                st.session_state.persona_key = login
                 st.session_state.messages = []
                 st.session_state.session_id = f"bi_ia_{USUARIOS_DEMO[login]['user_context']['funcionario']}_{uuid.uuid4().hex[:8]}"
                 st.rerun()
@@ -388,21 +432,34 @@ if DEMO_MODE:
 
 chat_container = st.container()
 
+chat_vazio = not st.session_state.messages
+
 with chat_container:
-    if not st.session_state.messages:
+    if chat_vazio:
         with st.chat_message("assistant"):
-            sugestao = ("*Qual foi o faturamento deste mês?* ou *Como está o quadrante de julho?*"
-                        if ctx["can_see_all"]
-                        else "*Como estou em relação à minha meta?* ou *Quais meus melhores clientes do mês?*")
             primeiro_nome = ctx['nome'].split()[0] if ctx['nome'] else 'tudo bem'
-            st.markdown(f"Olá, **{primeiro_nome}**! Sou seu assistente de BI. Experimente: {sugestao}")
+            st.markdown(f"Olá, **{primeiro_nome}**! Sou seu assistente de BI. "
+                        "Escolha uma pergunta abaixo para começar, ou digite a sua. "
+                        "As perguntas com 🔒 mostram o controle de acesso funcionando.")
 
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+# ── Perguntas-exemplo do perfil (só com a conversa vazia e crédito disponível) ──
+_pendente = None
+if chat_vazio and not credito_esgotado:
+    exemplos = EXEMPLOS.get(st.session_state.get("persona_key", ""), [])
+    if exemplos:
+        st.caption("💡 Experimente perguntar:")
+        _cols = st.columns(2)
+        for _idx, (_texto, _seg) in enumerate(exemplos):
+            _label = ("🔒 " + _texto) if _seg else _texto
+            if _cols[_idx % 2].button(_label, key=f"ex_{_idx}", use_container_width=True):
+                _pendente = _texto
+
 # ── Entrada do usuário (bloqueada se o crédito acabou) ──
-user_input = None if credito_esgotado else st.chat_input("Pergunte aos seus dados...")
+user_input = _pendente or (None if credito_esgotado else st.chat_input("Pergunte aos seus dados..."))
 
 if user_input:
     _uso_id = None
