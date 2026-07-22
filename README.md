@@ -249,11 +249,13 @@ uvicorn fastapi_server:app --host 127.0.0.1 --port 8000   # API REST p/ frontend
 langgraph dev                                              # grafo visual no LangSmith Studio
 ```
 
-### Demo pública (opcional)
+### Demo pública
 
-Há um **modo demo** com login Google, limite de perguntas por pessoa e feedback,
-pensado para hospedar no Hugging Face Spaces (`DEMO_MODE=true`). Passo a passo em
-[DEPLOY.md](DEPLOY.md).
+O **modo demo** (`DEMO_MODE=true`) adiciona login com Google, limite de perguntas por
+pessoa (controle de custo) e registro de feedback. Está no ar em
+**[bicopilot-raulrmo.streamlit.app](https://bicopilot-raulrmo.streamlit.app)**, hospedado no
+**Streamlit Community Cloud**, com a camada semântica no **Cube Cloud** e os dados no Supabase.
+Passo a passo do deploy em [DEPLOY.md](DEPLOY.md).
 
 ---
 
