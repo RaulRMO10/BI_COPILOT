@@ -13,13 +13,16 @@ CREATE TABLE IF NOT EXISTS demo_usuarios (
     ultimo_acesso  TIMESTAMP DEFAULT (now() AT TIME ZONE 'America/Sao_Paulo')
 );
 
--- Uma linha por pergunta feita. Dá o consumo por pessoa E o disjuntor diário global.
+-- Uma linha por pergunta feita, com a resposta do agente e o SQL gerado.
+-- Dá o consumo por pessoa, o disjuntor diário global E o histórico completo de Q&A.
 CREATE TABLE IF NOT EXISTS demo_uso (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    email      TEXT,
-    persona    TEXT,
-    pergunta   TEXT,
-    criado_em  TIMESTAMP DEFAULT (now() AT TIME ZONE 'America/Sao_Paulo')
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email         TEXT,
+    persona       TEXT,
+    pergunta      TEXT,
+    resposta      TEXT,
+    sql_executado TEXT,
+    criado_em     TIMESTAMP DEFAULT (now() AT TIME ZONE 'America/Sao_Paulo')
 );
 CREATE INDEX IF NOT EXISTS idx_demo_uso_email ON demo_uso (email);
 CREATE INDEX IF NOT EXISTS idx_demo_uso_dia ON demo_uso ((criado_em::date));

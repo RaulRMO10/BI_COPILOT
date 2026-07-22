@@ -139,11 +139,26 @@ def _demo_status(email: str):
     return limite, usadas, global_dia
 
 
-def _demo_registrar_pergunta(email: str, persona: str, pergunta: str) -> None:
+def _demo_registrar_pergunta(email: str, persona: str, pergunta: str) -> int | None:
+    """Registra a pergunta (conta crédito) e devolve o id da linha para depois
+    gravar a resposta na mesma linha."""
     conn = _db()
     cur = conn.cursor()
-    cur.execute("INSERT INTO demo_uso (email, persona, pergunta) VALUES (%s, %s, %s)",
+    cur.execute("INSERT INTO demo_uso (email, persona, pergunta) VALUES (%s, %s, %s) RETURNING id",
                 (email, persona, pergunta[:500]))
+    uso_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return uso_id
+
+
+def _demo_registrar_resposta(uso_id: int, resposta: str, sql: str = "") -> None:
+    """Grava a resposta do agente (e o SQL gerado) na linha da pergunta."""
+    if not uso_id:
+        return
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("UPDATE demo_uso SET resposta = %s, sql_executado = %s WHERE id = %s",
+                (resposta[:4000] if resposta else None, (sql or None), uso_id))
     conn.commit(); cur.close(); conn.close()
 
 
@@ -390,8 +405,9 @@ with chat_container:
 user_input = None if credito_esgotado else st.chat_input("Pergunte aos seus dados...")
 
 if user_input:
+    _uso_id = None
     if DEMO_MODE:
-        _demo_registrar_pergunta(demo_email, st.session_state.get("persona_key", "?"), user_input)
+        _uso_id = _demo_registrar_pergunta(demo_email, st.session_state.get("persona_key", "?"), user_input)
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     with chat_container:
@@ -436,6 +452,15 @@ if user_input:
                                     db_sqls_executed.append({"tool": msg.name, "sql": res_dict["sql_executado_no_banco"]})
                             except Exception:
                                 pass
+
+                    # Grava a resposta (e o SQL) na linha da pergunta — histórico completo por pessoa
+                    if DEMO_MODE:
+                        _sql_log = ""
+                        if cube_payload_str:
+                            _sql_log += f"[Cube JSON] {cube_payload_str}\n"
+                        for _s in db_sqls_executed:
+                            _sql_log += f"[{_s['tool']}] {_s['sql']}\n"
+                        _demo_registrar_resposta(_uso_id, resposta_final, _sql_log.strip())
 
                     rag_context = resultado.get("rag_context", "")
                     if cube_payload_str or db_sqls_executed or rag_context:
