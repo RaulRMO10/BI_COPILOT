@@ -11,7 +11,9 @@ Sistema de Business Intelligence conversacional que permite consultar indicadore
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![LangSmith](https://img.shields.io/badge/LangSmith-Tracing-1C3C3C)
 
-> 🖼️ _Screenshot/GIF da interface conversacional aqui — mostre uma pergunta real e a resposta formatada._
+🔗 **Demo ao vivo:** [bicopilot-raulrmo.streamlit.app](https://bicopilot-raulrmo.streamlit.app) — login com Google, 10 perguntas de cortesia.
+
+![Demonstração do BI Copilot](docs/demo.gif)
 
 > ℹ️ **Sobre este projeto:** desenvolvido originalmente em ambiente profissional e disponibilizado aqui **com autorização**, para fins de estudo e portfólio (pós-graduação em **Agentes de IA — FIAP**). Esta versão roda em **modo demonstração**: banco próprio no Supabase com dados públicos e sintéticos — **nenhum dado real de empresa**.
 

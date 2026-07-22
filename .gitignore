@@ -45,3 +45,7 @@ Thumbs.db
 # ─── Node / Cube.js ───────────────────────────────────────────────────────────
 cube_project/node_modules/
 cube_project/.cubestore/
+
+# Videos de gravacao (fonte dos GIFs — nao versionar)
+*.mp4
+*.mov
