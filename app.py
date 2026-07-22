@@ -439,24 +439,26 @@ with chat_container:
         with st.chat_message("assistant"):
             primeiro_nome = ctx['nome'].split()[0] if ctx['nome'] else 'tudo bem'
             st.markdown(f"Olá, **{primeiro_nome}**! Sou seu assistente de BI. "
-                        "Escolha uma pergunta abaixo para começar, ou digite a sua. "
-                        "As perguntas com 🔒 mostram o controle de acesso funcionando.")
+                        "Digite qualquer pergunta no chat abaixo — ou abra **Perguntas de exemplo** "
+                        "para ver sugestões (as marcadas com 🔒 demonstram o controle de acesso).")
 
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# ── Perguntas-exemplo do perfil (só com a conversa vazia e crédito disponível) ──
+# ── Perguntas de exemplo (sugestões — o usuário pode digitar o que quiser) ──
+# Ficam num popover que abre ao clicar; disponível a qualquer momento.
 _pendente = None
-if chat_vazio and not credito_esgotado:
+if not credito_esgotado:
     exemplos = EXEMPLOS.get(st.session_state.get("persona_key", ""), [])
     if exemplos:
-        st.caption("💡 Experimente perguntar:")
-        _cols = st.columns(2)
-        for _idx, (_texto, _seg) in enumerate(exemplos):
-            _label = ("🔒 " + _texto) if _seg else _texto
-            if _cols[_idx % 2].button(_label, key=f"ex_{_idx}", use_container_width=True):
-                _pendente = _texto
+        with st.popover("💡 Perguntas de exemplo", use_container_width=False):
+            st.caption("São apenas sugestões — você pode digitar qualquer pergunta no chat. "
+                       "As marcadas com 🔒 mostram o controle de acesso em ação.")
+            for _idx, (_texto, _seg) in enumerate(exemplos):
+                _label = ("🔒 " + _texto) if _seg else _texto
+                if st.button(_label, key=f"ex_{_idx}", use_container_width=True):
+                    _pendente = _texto
 
 # ── Entrada do usuário (bloqueada se o crédito acabou) ──
 user_input = _pendente or (None if credito_esgotado else st.chat_input("Pergunte aos seus dados..."))
