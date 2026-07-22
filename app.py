@@ -30,6 +30,7 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "ye
 LIMITE_PERGUNTAS = int(os.getenv("DEMO_LIMITE_PERGUNTAS", "10"))     # por pessoa
 LIMITE_GLOBAL_DIA = int(os.getenv("DEMO_LIMITE_GLOBAL_DIA", "300"))  # disjuntor global
 LINKEDIN_URL = os.getenv("LINKEDIN_URL", "https://www.linkedin.com/in/raulrmo/")
+OWNER_EMAIL = os.getenv("OWNER_EMAIL", "raulmartinsagrivet1@gmail.com").strip().lower()  # painel admin
 GITHUB_URL = os.getenv("GITHUB_URL", "https://github.com/RaulRMO10/BI_COPILOT")
 
 st.set_page_config(
@@ -215,6 +216,102 @@ def _demo_feedback(email: str, nome: str, rating: str, comentario: str = "") -> 
     _notificar(f"{emoji} Feedback de {nome} ({email})" + (f": {comentario}" if comentario else ""))
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Painel de administração (só o OWNER_EMAIL enxerga) — estatísticas de uso
+# ═════════════════════════════════════════════════════════════════════════════
+def _admin_df(sql: str, params=None):
+    import pandas as pd
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute(sql, params or ())
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _tela_admin(email_logado: str):
+    """Dashboard de estatísticas — acesso restrito ao dono."""
+    if (email_logado or "").strip().lower() != OWNER_EMAIL:
+        st.error("Acesso restrito ao administrador.")
+        st.stop()
+
+    st.title("📊 Painel de Estatísticas — BI Copilot")
+    if st.button("← Voltar ao assistente"):
+        st.session_state.pop("view", None)
+        st.rerun()
+
+    # KPIs
+    total_users = int(_admin_df("SELECT count(*) n FROM demo_usuarios").iloc[0]["n"])
+    total_perg = int(_admin_df("SELECT count(*) n FROM demo_uso").iloc[0]["n"])
+    perg_hoje = int(_admin_df("SELECT count(*) n FROM demo_uso WHERE criado_em::date = current_date").iloc[0]["n"])
+    fb = _admin_df("""SELECT
+                        count(*) FILTER (WHERE rating='positivo') AS pos,
+                        count(*) FILTER (WHERE rating='negativo') AS neg
+                      FROM demo_feedback""")
+    fb_pos, fb_neg = int(fb.iloc[0]["pos"]), int(fb.iloc[0]["neg"])
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Visitantes", total_users)
+    c2.metric("Perguntas (total)", total_perg)
+    c3.metric("Perguntas hoje", perg_hoje)
+    c4.metric("Avaliações 👍", fb_pos)
+    c5.metric("Avaliações 👎", fb_neg)
+
+    st.divider()
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Perguntas por perfil")
+        df = _admin_df("SELECT persona, count(*) AS perguntas FROM demo_uso GROUP BY persona ORDER BY perguntas DESC")
+        if not df.empty:
+            st.bar_chart(df.set_index("persona"))
+        else:
+            st.caption("Sem dados ainda.")
+    with col_b:
+        st.subheader("Perguntas por dia")
+        df = _admin_df("SELECT criado_em::date AS dia, count(*) AS perguntas FROM demo_uso GROUP BY dia ORDER BY dia")
+        if not df.empty:
+            st.line_chart(df.set_index("dia"))
+        else:
+            st.caption("Sem dados ainda.")
+
+    st.subheader("Visitantes")
+    st.dataframe(_admin_df("""
+        SELECT u.nome, u.email, count(x.id) AS perguntas,
+               to_char(max(x.criado_em), 'DD/MM HH24:MI') AS ultima_pergunta,
+               to_char(u.criado_em, 'DD/MM HH24:MI') AS primeiro_acesso
+        FROM demo_usuarios u
+        LEFT JOIN demo_uso x ON x.email = u.email
+        GROUP BY u.nome, u.email, u.criado_em
+        ORDER BY perguntas DESC
+    """), use_container_width=True, hide_index=True)
+
+    st.subheader("Perguntas mais frequentes")
+    st.dataframe(_admin_df("""
+        SELECT pergunta, count(*) AS vezes FROM demo_uso
+        GROUP BY pergunta ORDER BY vezes DESC LIMIT 15
+    """), use_container_width=True, hide_index=True)
+
+    st.subheader("Avaliações recebidas")
+    df_fb = _admin_df("""
+        SELECT to_char(criado_em, 'DD/MM HH24:MI') AS quando, nome, rating, comentario
+        FROM demo_feedback ORDER BY criado_em DESC
+    """)
+    if df_fb.empty:
+        st.caption("Nenhuma avaliação ainda.")
+    else:
+        st.dataframe(df_fb, use_container_width=True, hide_index=True)
+
+    st.subheader("Histórico de perguntas e respostas")
+    st.caption("Últimas 200 interações (pergunta, resposta e SQL gerado).")
+    st.dataframe(_admin_df("""
+        SELECT to_char(criado_em, 'DD/MM HH24:MI') AS quando, email, persona,
+               pergunta, resposta, sql_executado
+        FROM demo_uso ORDER BY criado_em DESC LIMIT 200
+    """), use_container_width=True, hide_index=True)
+
+
 def _obter_identidade():
     """Retorna (email, nome) do visitante. Interrompe a execução se não logado.
     Usa login Google nativo quando [auth] está configurado; senão, um formulário
@@ -268,10 +365,14 @@ def _tela_boas_vindas(google: bool):
                         st.error("Informe um nome e um e-mail válido.")
 
 
-def _tela_escolha_persona(email: str, nome: str):
+def _tela_escolha_persona(email: str, nome: str, is_admin: bool = False):
     st.title(f"🧭 Olá, {nome.split()[0]}!")
     st.markdown("Escolha **de qual cadeira** você quer explorar o BI. O mesmo assistente "
                 "responde de formas diferentes conforme o acesso do perfil — é a segurança em ação.")
+    if is_admin:
+        if st.button("📊 Abrir painel de estatísticas (admin)", type="primary"):
+            st.session_state["view"] = "admin"
+            st.rerun()
     st.write("")
     cols = st.columns(3)
     exemplos = {
@@ -357,16 +458,24 @@ def _tela_login_local():
 # FLUXO PRINCIPAL
 # ═════════════════════════════════════════════════════════════════════════════
 demo_email = demo_nome = None
+is_admin = False
 if DEMO_MODE:
     demo_email, demo_nome = _obter_identidade()
     if _demo_registrar_usuario(demo_email, demo_nome):
         _notificar(f"🎉 Novo visitante no BI Copilot: {demo_nome} ({demo_email})")
+    is_admin = (demo_email or "").strip().lower() == OWNER_EMAIL
+
+    # Painel admin (só o dono) — alterna via st.session_state.view
+    if is_admin and st.session_state.get("view") == "admin":
+        _tela_admin(demo_email)
+        st.stop()
+
     limite, usadas, global_dia = _demo_status(demo_email)
-    if global_dia >= LIMITE_GLOBAL_DIA:
+    if global_dia >= LIMITE_GLOBAL_DIA and not is_admin:
         _tela_limite_global()
         st.stop()
     if "usuario" not in st.session_state:
-        _tela_escolha_persona(demo_email, demo_nome)
+        _tela_escolha_persona(demo_email, demo_nome, is_admin=is_admin)
         st.stop()
 else:
     if "usuario" not in st.session_state:
@@ -404,6 +513,10 @@ with st.sidebar:
             for chave in ("usuario", "messages", "session_id"):
                 st.session_state.pop(chave, None)
             st.rerun()
+        if is_admin:
+            if st.button("📊 Painel de estatísticas", use_container_width=True):
+                st.session_state["view"] = "admin"
+                st.rerun()
     else:
         st.divider()
         if st.button("💬 Nova conversa", use_container_width=True):
