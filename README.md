@@ -209,7 +209,7 @@ Principais variáveis (ver [.env.example](.env.example)):
 
 ```
 DATABASE_URL=      # URI do session pooler do Supabase (porta 5432, sslmode=require)
-LLM_PROVIDER=      # openai | anthropic
+LLM_PROVIDER=      # openai (default) | anthropic (requer pip install langchain-anthropic)
 LLM_MODEL=         # ex.: gpt-5.1 | claude-sonnet-5
 OPENAI_API_KEY=    # e/ou ANTHROPIC_API_KEY, conforme o provider
 CUBEJS_API_SECRET= # mesma secret do cube_project/.env
@@ -227,6 +227,9 @@ python -m seed.build_sinteticos  # metas, crédito, estoque
 python -m seed.validate          # checks de sanidade
 python sync_cube_to_db.py        # dicionário de métricas (ai_controle_metricas)
 ```
+
+> Manutenção: os dados são re-datados para uma janela recente; rode
+> `python -m seed.atualizar_janela` ~1x por mês para o "mês passado" não envelhecer.
 
 ### 4. Subir o Cube.js
 

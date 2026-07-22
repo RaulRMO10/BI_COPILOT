@@ -231,6 +231,9 @@ def _admin_df(sql: str, params=None):
 
 
 def _tela_admin(email_logado: str):
+    if not _auth_google_configurado():
+        st.error("Painel disponível apenas com login Google verificado.")
+        st.stop()
     """Dashboard de estatísticas — acesso restrito ao dono."""
     if (email_logado or "").strip().lower() != OWNER_EMAIL:
         st.error("Acesso restrito ao administrador.")
@@ -463,7 +466,9 @@ if DEMO_MODE:
     demo_email, demo_nome = _obter_identidade()
     if _demo_registrar_usuario(demo_email, demo_nome):
         _notificar(f"🎉 Novo visitante no BI Copilot: {demo_nome} ({demo_email})")
-    is_admin = (demo_email or "").strip().lower() == OWNER_EMAIL
+    # Admin só com identidade verificada pelo Google (st.login). No fallback local
+    # (sem [auth]) qualquer um poderia digitar o e-mail do dono — por isso o guard.
+    is_admin = _auth_google_configurado() and (demo_email or "").strip().lower() == OWNER_EMAIL
 
     # Painel admin (só o dono) — alterna via st.session_state.view
     if is_admin and st.session_state.get("view") == "admin":
@@ -543,6 +548,19 @@ if DEMO_MODE:
         credito_esgotado = True
         _tela_parede(demo_email, demo_nome)
 
+def _widget_feedback(idx: int):
+    """Barra 👍/👎 sob uma resposta. st.feedback persiste entre reruns — botões
+    comuns aqui perderiam o clique (o widget sumiria no rerun antes de registrar)."""
+    val = st.feedback("thumbs", key=f"fb_{idx}")
+    if val is not None and not st.session_state.get(f"fb_reg_{idx}"):
+        st.session_state[f"fb_reg_{idx}"] = True
+        pergunta = st.session_state.messages[idx - 1].get("content", "")[:200] if idx > 0 else ""
+        _demo_feedback(demo_email, demo_nome,
+                       "positivo" if val == 1 else "negativo",
+                       f"[resposta à: {pergunta}]")
+        st.toast("Obrigado pelo feedback! 💚" if val == 1 else "Valeu! Vou melhorar. 🙏")
+
+
 chat_container = st.container()
 
 chat_vazio = not st.session_state.messages
@@ -558,6 +576,8 @@ with chat_container:
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if DEMO_MODE and message["role"] == "assistant":
+                _widget_feedback(i)
 
 # ── Perguntas de exemplo (sugestões — o usuário pode digitar o que quiser) ──
 # Ficam num popover que abre ao clicar; disponível a qualquer momento.
@@ -678,16 +698,9 @@ if user_input:
                                     elif m.type == "tool":
                                         st.write(f"⚙️ **Retorno de `{m.name}`:** {len(str(m.content))} chars lidos.")
 
-                    # ── Feedback rápido por resposta (só no modo demo) ──
+                    # ── Feedback 👍/👎 (aparece já nesta run; persiste via histórico) ──
                     if DEMO_MODE:
-                        fb_key = f"fb_{len(st.session_state.messages)}"
-                        c1, c2, _ = st.columns([1, 1, 6])
-                        if c1.button("👍", key=fb_key + "_up", help="Resposta útil"):
-                            _demo_feedback(demo_email, demo_nome, "positivo", f"[resposta] {user_input}")
-                            st.toast("Obrigado pelo feedback! 💚")
-                        if c2.button("👎", key=fb_key + "_down", help="Resposta ruim"):
-                            _demo_feedback(demo_email, demo_nome, "negativo", f"[resposta] {user_input}")
-                            st.toast("Valeu! Vou melhorar. 🙏")
+                        _widget_feedback(len(st.session_state.messages) - 1)
 
                 except Exception as e:
                     st.error(f"Infelizmente encontrei um erro crítico: {str(e)}")

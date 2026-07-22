@@ -1,6 +1,6 @@
 """
 FastAPI Server — Bridge entre o Laravel e o Agente LangGraph.
-Roda em: uvicorn fastapi_server:app --host 127.0.0.1 --port 8501
+Roda em: uvicorn fastapi_server:app --host 127.0.0.1 --port 8000
 IMPORTANTE: usar --host 127.0.0.1 (não 0.0.0.0) para aceitar apenas conexões locais.
 """
 

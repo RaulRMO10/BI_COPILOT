@@ -68,10 +68,17 @@ def get_connection():
 # ---------------------------------------------------------------------------
 _SQL_BLOCKED_PATTERNS = re.compile(
     r"\b("
-    r"pg_sleep|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_stat_file"
-    r"|pg_terminate_backend|pg_cancel_backend|pg_reload_conf"
-    r"|pg_catalog|information_schema|pg_shadow|pg_authid|pg_roles|pg_user|pg_settings"
+    # funções e catálogos de sistema do Postgres (pg_sleep, pg_read_file, pg_catalog,
+    # pg_stat_activity, pg_class...) — prefixo inteiro bloqueado
+    r"pg_[a-z0-9_]+"
+    r"|information_schema"
     r"|current_setting|set_config|dblink|lo_import|lo_export"
+    # tabelas fora do escopo analítico: modo demo (e-mails de visitantes),
+    # infraestrutura do agente (checkpoints/auditoria) e staging do seed
+    r"|demo_[a-z0-9_]+"
+    r"|ai_[a-z0-9_]+"
+    r"|stg_[a-z0-9_]+"
+    # DML/DDL
     r"|grant|revoke|drop|truncate|delete|update|insert|merge|create|alter|vacuum|copy"
     r")\b",
     re.IGNORECASE,
@@ -119,7 +126,7 @@ def buscar_representante(nome_busca: str) -> str:
     try:
         cursor = conn.cursor()
 
-        base_query = f"""
+        base_query = """
             SELECT DISTINCT
                 fr.representante,
                 fr.nome_representante,
